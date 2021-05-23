@@ -124,6 +124,28 @@ clean.gps <- function(df,x,y){
     )
   return(df.temp)
 }
+
+# x = response
+# y = masterlist
+# pattern_x = "a4_other_site"
+# by_y = "Site.Name.In.Arabic"
+
+partial_join <- function(x, y, pattern_x, by_y){
+  # idy_y <- sapply(x[[pattern_x]], grep, y[[by_y]])                              # for each sitename in x, get the row indices in y with corresponding partial matches (as a list)
+  # idy_y <- sapply(x, grep, y[[by_y]])
+  # z <- x[[pattern_x]] %>% str_split(" ") %>% gsub("\\(|\\)", "", .)
+  z <- x[[pattern_x]] %>% str_split(" ") 
+  idy_y <- sapply(z, pmatch, y[[by_y]])
+  idy_y <- lapply(idy_y, function(x) if (sum(!is.na(x))> 0) {x[!is.na(x)]} )
+  idx_x <- sapply(seq_along(idy_y), function(i) rep(i, length(idy_y[[i]])))     # calls the corresponding row numbers in x to join them to y (repeats the x match as many time as partial match in y)
+  df <- dplyr::bind_cols(x[unlist(idx_x), , drop = F],                          # calls all partial matches rows of x, repeating the multiple matches if necessary
+                         y[unlist(idy_y), , drop = F]) %>%                      # calls the partially matching rows of y => bind_cols creates the output dataframe
+    select(all_of(pattern_x), all_of(by_y), everything())
+  df <- plyr::rbind.fill(df, x[-unlist(idx_x), , drop = F])                     # add all non matchine
+  # add the non matching lines 
+  return(df)
+}
+
 clean.gps.old <- function(df,x,y){
   df.temp<-df %>%
     mutate(issue_lon = case_when(
