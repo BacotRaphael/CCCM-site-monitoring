@@ -7,27 +7,10 @@ rm(list=ls())
 setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
 today <- Sys.Date()
 
-## Download necessary packages
-# devtools::install_github("mabafaba/xlsformfill", force = T)
-# devtools::install_github("agualtieri/cleaninginspectoR", force = T)
-# devtools::install_github("agualtieri/dataqualitycontrol", force = T)
-
-
-## Install packages
-#install.packages("tidyverse")
-#install.packages("data.table")
-#install.packages("openxlsx")
-
-## Load libraries
-require(tidyverse)
-require(dataqualitycontrol)
-require(cleaninginspectoR)
-require(data.table)
-require(openxlsx)
-require(reshape2)
-require(clog)
-
-# browseVignettes("clog")
+## Install/Load libraries
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(tidyverse, data.table, openxlsx, reshape2, sf, leaflet, readxl)
+p_load_gh("mabafaba/cleaninginspectoR","agualtieri/cleaninginspectoR","agualtieri/dataqualitycontrol", "impact-initiatives-research/clog")
 
 ## Source
 source("./R/cleanHead.R")
@@ -50,19 +33,19 @@ response <- read.xlsx("./data/CCCM_Site_Reporting_Form_V1_example raw data.xlsx"
 cleaning_log <- read.xlsx("./output/CCCM_SiteID_cleaning log_2021-05-19.xlsx")
 # cleaning_log <- read.xlsx("./output/CCCM_SiteID_cleaning log_2021-05-06.xlsx")
 
-## Apply cleaning log [edited loop to change latitude & longitude + new format for conflicting variable in priority needs checks]
-
-
-for (n in seq_along(1:nrow(cleaning_log))){
-  col <- cleaning_log %>% slice(n) %>% pull(variable)                                         # Get the name of the variable to be updated in response dataset
-  new_value <- cleaning_log %>% slice(n) %>% pull(new_value)                                  # Get the new value for this cleaning log entry
-  if (new_value %in% c("confirmed", "Confirmed")) {new_value <- cleaning_log[n, "old_value"]} # Tell to keep old value if new value is "confirmed"
-  
-  response[n, col] <- cleaning_log %>% slice(n) %>% pull(new_value)                           # Update the value in response dataset
-  if (!is.na(cleaning_log[n, "conflicting_variable"])) {                                      # In case there is a conflicting variable, update this variable too
-    col2 <- cleaning_log %>% slice(n) %>% pull(conflicting_variable)                          # Get the name of the conflicting variable to be updated
-  }
-}
+# ## Apply cleaning log [edited loop to change latitude & longitude + new format for conflicting variable in priority needs checks]
+# 
+# 
+# for (n in seq_along(1:nrow(cleaning_log))){
+#   col <- cleaning_log %>% slice(n) %>% pull(variable)                                         # Get the name of the variable to be updated in response dataset
+#   new_value <- cleaning_log %>% slice(n) %>% pull(new_value)                                  # Get the new value for this cleaning log entry
+#   if (new_value %in% c("confirmed", "Confirmed")) {new_value <- cleaning_log[n, "old_value"]} # Tell to keep old value if new value is "confirmed"
+#   
+#   response[n, col] <- cleaning_log %>% slice(n) %>% pull(new_value)                           # Update the value in response dataset
+#   if (!is.na(cleaning_log[n, "conflicting_variable"])) {                                      # In case there is a conflicting variable, update this variable too
+#     col2 <- cleaning_log %>% slice(n) %>% pull(conflicting_variable)                          # Get the name of the conflicting variable to be updated
+#   }
+# }
 
 ## Apply cleaning log
 my_log <- cleaninglog(ids = cleaning_log$uuid,
@@ -73,6 +56,20 @@ my_log <- cleaninglog(ids = cleaning_log$uuid,
                       data_id_column_name = "uuid")
 
 clean_data <- clog_clean(response, my_log)
+
+# ## In case a new ID has to be assigned 
+# paste DistrictPcode and increasing number
+# YE1505_1566 => get the latest created id code and increase by one the number after 
+# => move that part in the data cleaning script
+
+# max.id.split.df <- response$a4_site_name %>% sub(".*?_", "",.) %>% as.numeric %>% max(na.rm = T)
+# max.id.split.master <- masterlist$Site_ID %>% sub(".*?_", "",.) %>% as.numeric %>% max(na.rm = T)
+# max.id.split <- max(max.id.split.master, max.id.split.df)
+# latest_id <- masterlist$Site_ID[grepl(paste0("_", max.id.split), masterlist$Site_ID)]
+# response <- response %>% mutate(new_site_id = ifelse(a4_site_name != "other", a4_site_name, paste0(a2_district,"_",numeric_seq$numeric_seq)))
+
+#numeric_seq <- seq(from = 1185, to = 5000)
+#numeric_seq <- data.frame(numeric_seq)
 
 ### Using kobo to rename the site name and than merge the other column
 

@@ -17,52 +17,75 @@ source("./R/cleanHead.R")
 source("./R/check_time_RBA.R")
 source("./R/utils.R")
 
+## Paramaters to be updated each month
+
+tool.version <- "V1"                                                            # V1 or V2 update according to the kobo tool used
+# tool.version <- "V2"
+
+rawdata.filename.v1 <- "data/Copy of CCCM_Site_Reporting_Form_V1_Week 8_raw org data.xlsx"    # Update the name of the rawdata filename
+rawdata.filename.v2 <- "Copy of CCCM_Site_Reporting_V2__Week 8_raw org data.xlsx"
+tool.filename.v1 <- "data/CCCM_Site_Reporting_Kobo_tool_(V1)_12042021.xlsx"
+tool.filename.v2 <- "data/CCCM_Site_Reporting_Kobo_tool_(V2)_12042021.xlsx"
+sitemasterlist.filename <- "CCCM-site-masterlist-cleaning/data/CCCM_IDP Hosting Site List_March 2021.xlsx"
+
 ## Load site_name masterlist to match admin names with site_name
 setwd("..")
-masterlist <- read.xlsx("CCCM-site-masterlist-cleaning/data/CCCM_IDP Hosting Site List_March 2021.xlsx") %>%
+masterlist <- read.xlsx(sitemasterlist.filename) %>%
   setNames(gsub("\\.", "_", colnames(.)))
 setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
 
 ## Load data to be cleaned
-response <- read.xlsx("data/CCCM_Site_Reporting_Form_V1_example raw data.xlsx") %>%
-  mutate(a4_site_name = a4_other_site, id = 1:n(), .before = "deviceid") %>%
-  dplyr::rename(index = '_index', uuid = '_uuid') 
 
-## Remove group name and reduce to all lowercase
-names(response) <- tolower(names(response))
+response <- if (tool.version == "V1") {read.xlsx(rawdata.filename.v1)} else if (tool.version == "V2") {read.xlsx(rawdata.filename.v2)}
+response <- response %>%
+  mutate(id = 1:n(), .before = "deviceid") %>%
+  dplyr::rename(index = '_index', uuid = '_uuid') %>%
+  setNames(tolower(colnames(.)))                                                # reduce to all lowercase
+
+## Remove group name
 #response <- cleanHead(response) ## This will gives duplicate colnames, so rather update the tool 
 #response <- cleanHead(response)
 
 ## Anonymize dataset
 #response <- anonymise_dataset(response, c("deviceid", "subscriberid", "imei", "phonenumber", "q0_1_enumerator_name", "q0_2_gender", "q1_1_key_informant_name",
                                           #"q1_2_key_informat_gender", "q1_3_key_informat_mobile_number", "a5_gps_coordinates", "calca11", "__version__", "_id", "_submission_time", "_validation_status"))
+#response <- select(response, -c("deviceid", "subscriberid", "imei", "phonenumber", "q0_1_enumerator_name", "q0_2_gender", "q1_1_key_informant_name",
+#"q1_2_key_informat_gender", "q1_3_key_informat_mobile_number", "a5_gps_coordinates", "calca11", "__version__", "_id", "_submission_time", "_validation_status"))
 
 ## Load survey choices Using kobo to rename the site name and than merge the other column
-choices <- read.xlsx("data/CCCM_Site_Reporting_Kobo_tool_(V1)_12042021.xlsx", sheet = "choices")
-external_choices <- read.xlsx("data/CCCM_Site_Reporting_Kobo_tool_(V1)_12042021.xlsx", sheet = "external_choices") %>%
+choices <- if (tool.version == "V1") {read.xlsx(tool.filename.v1, sheet = "choices")} else if(tool.version == "V2") {read.xlsx(tool.filename.v2, sheet = "choices")}
+external_choices <- if (tool.version == "V1") {read.xlsx(tool.filename.v1, sheet = "external_choices")} else if (tool.version == "V2") {read.xlsx(tool.filename.v2, sheet = "external_choices")}
+external_choices_site <- external_choices %>%
   filter(list_name == "sitename") %>% dplyr::rename(a4_site_name = name)
 
 # Try to match arabic with english names => see with partial match function sent to Kata => to be tested
-# response$a4_site_name2 <- external_choices$`label::english`[match(response$a4_site_name, external_choices$`label::arabic`)]
-# response <- mutate(response, a4_site_name3 = ifelse(!is.na(a4_site_name2), as.character(a4_site_name2), a4_other_site))
+# response$a4_site_name2 <- external_choices_site$`label::english`[pmatch(response$a4_other_site, external_choices_site$`label::arabic`)]
+response$a4_site_name2 <- external_choices_site$`label::english`[match(response$a4_other_site, external_choices_site$`label::arabic`)]
+response <- response %>% mutate(a4_site_name3 = ifelse(!is.na(a4_site_name2), as.character(a4_site_name2), a4_other_site))
+
+response2 <- response %>% 
+  select(matches("site_name|other_site"), everything()) %>%
+  left_join(masterlist %>% select(Site_ID, Site_Name, Site_Name_In_Arabic), by = c("a4_other_site" = "Site_Name_In_Arabic")) %>%
+  relocate(Site_ID, Site_Name, .before = "a4_other_site") %>%
+  mutate(a4_site_name = ifelse(a4_site_name == "other", Site_ID, a4_site_name),
+         a4_site_name3 = ifelse(!is.na(a4_site_name), masterlist$Site_Name[match(response2$a4_site_name, masterlist$Site_ID)], a4_site_name3))
 
 ## IF YOU DON'T MANAGE TO FIND OUT THE RIGHT MATCH, Comment the below section and run the two lines above
 # Partial matching of arabic name in data with the site masterlist
-response <- partial_join(x = response, y = masterlist, pattern_x = "a4_other_site", by_y = "Site_Name_In_Arabic") %>%
-  mutate(a4_site_name3 = ifelse(!is.na(Site_Name_In_Arabic), Site_Name_In_Arabic, a4_other_site))
-# IMPORTANT!!! Look at the dataframe and make sure that the duplicates partial match have been removed.
-# to remove a duplicate partial match 
-# [Let's say that the there are three Site_Name_In_Arabic matchs "Aden", Adenalos "Aden village" 
-# and Aden is the real match you want to keep, then run:
-# response <- response %>% filter(!Site_Name_In_Arabic %in% c("Aden village", "Adenalos"))
-# It will filter out all rows for which Site_Name_In_Arabic is either Aden village or Adenalos
-response <- response %>% filter(!Site_Name_In_Arabic %in% c(""))                # Add the match to exclude in the vector c("")
+# Add: Filter partial match to the corresponding governorate 
+# response2 <- partial_join(x = response, y = masterlist, pattern_x = "a4_other_site", by_y = "Site_Name_In_Arabic") %>%
+#   mutate(a4_site_name3 = ifelse(!is.na(Site_Name_In_Arabic), Site_Name_In_Arabic, a4_other_site))
 
-## In case a new ID has to be assigned
-### Create var from 1185 onwards and assing new site id
-#numeric_seq <- seq(from = 1185, to = 5000)
-#numeric_seq <- data.frame(numeric_seq)
-#response <- mutate(response, new_site_id = ifelse(a4_site_name != "other", a4_site_name, paste0(a2_district,"_",numeric_seq$numeric_seq)))
+# Do a partial match for Partner name in arabic from the external 
+choices.ngo <- choices %>% filter(list_name == "ngo") %>% select(-governorate, -list_name) %>% setNames(c("ngo_code", "ngo_name_en", "ngo_name_ar"))
+response3 <- response2 %>%
+  left_join(choices.ngo, by = c("q0_3_organization" = "ngo_code")) %>% relocate(ngo_name_en, .after = "q0_3_organization_other") %>%
+  left_join(choices.ngo %>% setNames(paste0(colnames(.), "_match_other")) , by = c("q0_3_organization_other" = "ngo_name_ar_match_other")) %>%
+  relocate(ngo_code_match_other, ngo_name_en_match_other, .after = "ngo_name_en")
+response <- response3 %>%
+  mutate(q0_3_organization = ifelse(q0_3_organization == "other" & !is.na(ngo_code_match_other), ngo_code_match_other, q0_3_organization),
+         ngo_name_en = ifelse(ngo_name_en == "Other" & !is.na(ngo_name_en_match_other), ngo_name_en_match_other, ngo_name_en))
+rm(response2,response3)
 
 ### GPS coordinates - Mapping and check
 
@@ -566,7 +589,6 @@ cleaning_log <- plyr::rbind.fill(duplicates_log,
 
 #write.csv(cleaning_log, paste0("./output/cleaning_log_",today,".csv"), row.names = F)
 #browseURL(paste0("./output/cleaning_log_",today,".csv"))
-
 
 #### Save adequacy check file for easier user
 final_log <- list("cleaning_log" = cleaning_log,
