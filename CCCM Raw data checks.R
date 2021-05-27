@@ -63,18 +63,23 @@ external_choices_site <- external_choices %>%
 response$a4_site_name2 <- external_choices_site$`label::english`[match(response$a4_other_site, external_choices_site$`label::arabic`)]
 response <- response %>% mutate(a4_site_name3 = ifelse(!is.na(a4_site_name2), as.character(a4_site_name2), a4_other_site))
 
+# masterlist <- masterlist %>%
+  # mutate(Site_Name_In_Arabic_tidy = gsub("????|????", "", Site_Name_In_Arabic))
+
 response2 <- response %>% 
   select(matches("site_name|other_site"), everything()) %>%
   left_join(masterlist %>% select(Site_ID, Site_Name, Site_Name_In_Arabic), by = c("a4_other_site" = "Site_Name_In_Arabic")) %>%
   relocate(Site_ID, Site_Name, .before = "a4_other_site") %>%
   mutate(a4_site_name = ifelse(a4_site_name == "other", Site_ID, a4_site_name),
-         a4_site_name3 = ifelse(!is.na(a4_site_name), masterlist$Site_Name[match(response2$a4_site_name, masterlist$Site_ID)], a4_site_name3))
+         a4_site_name3 = ifelse(!is.na(a4_site_name), masterlist$Site_Name[match(.$a4_site_name, masterlist$Site_ID)], a4_site_name3))
 
 ## IF YOU DON'T MANAGE TO FIND OUT THE RIGHT MATCH, Comment the below section and run the two lines above
 # Partial matching of arabic name in data with the site masterlist
 # Add: Filter partial match to the corresponding governorate 
 # response2 <- partial_join(x = response, y = masterlist, pattern_x = "a4_other_site", by_y = "Site_Name_In_Arabic") %>%
 #   mutate(a4_site_name3 = ifelse(!is.na(Site_Name_In_Arabic), Site_Name_In_Arabic, a4_other_site))
+
+
 
 # Do a partial match for Partner name in arabic from the external 
 choices.ngo <- choices %>% filter(list_name == "ngo") %>% select(-governorate, -list_name) %>% setNames(c("ngo_code", "ngo_name_en", "ngo_name_ar"))
@@ -86,6 +91,12 @@ response <- response3 %>%
   mutate(q0_3_organization = ifelse(q0_3_organization == "other" & !is.na(ngo_code_match_other), ngo_code_match_other, q0_3_organization),
          ngo_name_en = ifelse(ngo_name_en == "Other" & !is.na(ngo_name_en_match_other), ngo_name_en_match_other, ngo_name_en))
 rm(response2,response3)
+
+organisation_log <- response %>%
+  filter(q0_3_organization == "other") %>%
+  select("NA")                                                                  # Select columns for organisation cleaning log
+
+# Add to cleaning log the ngo name + new name =>
 
 ### GPS coordinates - Mapping and check
 
@@ -144,11 +155,11 @@ map <- leaflet() %>%
   addMarkers(data = df.adm3, lng = ~Longitude_clean, lat = ~Latitude_clean,
              label = paste0("The sitename name in tool is ", df.adm3$a4_other_site, ",\r\nmatched name in masterlist is: ", df.adm3$Site_Name_In_Arabic)) %>%
   addPolygons(data = df.adm2, color = "#B5B5B5", weight = 2, opacity = 0.5,
-               highlightOptions = highlightOptions(color = "white", weight = 2), fillOpacity = 0.5,
-               fillColor = ~pal.adm2(df.adm2$has.gps.issue),
-               label = paste0(df.adm2$admin2Name_en, " district"))
+              highlightOptions = highlightOptions(color = "white", weight = 2), fillOpacity = 0.5,
+              fillColor = ~pal.adm2(df.adm2$has.gps.issue),
+              label = paste0(df.adm2$admin2Name_en, " district"))
 
- map
+map
 
 ### ISSUE: If response has no admin 2 level, the below lines becomes useless as they aim at highlighing admin2 level columns not corresponding to entered GPS.
 
@@ -214,7 +225,7 @@ if(nrow(response_issue)>=1) {
                                            q0_3_organization=response[.$index,"q0_3_organization", drop=TRUE],
                                            a4_site_name3 = response[.$index, "a4_site_name3", drop = TRUE])
   issue_log <- cleaning.log.new.entries(issue_table, var="variable", issue_type="issue_type")
-  } else {print("No outliers issues have been detected. The dataset seems clean.")}
+} else {print("No outliers issues have been detected. The dataset seems clean.")}
 #write.csv(response_issue, paste0("./output/dataset_issues_",today,".csv"), row.names = F)
 #browseURL(paste0("./output/dataset_issues_",today,".csv"))
 
@@ -246,35 +257,35 @@ phone_melt <- phonenumber_df %>% mutate_at(vars(matches("number")), as.character
   mutate(variable = gsub("phone_number" ,"phonenumber" , paste0(variable,"_number"))) %>% 
   filter(number_wrong_number==1)
 
- if(nrow(phone_melt)>=1) {
-
-phone_melt$new_value <- " "
-phone_melt$fix <- "Checked with partner"
-phone_melt$checked_by <- "ON"
-phone_melt$issue_type <- "The phone number provided may contain errors"
-phone_melt$old_value <- phone_melt$number
-
- phone_log <- data.frame(uuid = phone_melt$uuid, 
-                         agency = phone_melt$q0_3_organization, 
-                         area = phone_melt$a4_site_name3, 
-                         variable = phone_melt$variable, 
-                         issue = phone_melt$issue_type, 
-                         old_value = phone_melt$old_value, 
-                         new_value = phone_melt$new_value, 
-                         fix = phone_melt$fix, 
-                         checked_by = phone_melt$checked_by)
-
-  } else { 
+if(nrow(phone_melt)>=1) {
+  
+  phone_melt$new_value <- " "
+  phone_melt$fix <- "Checked with partner"
+  phone_melt$checked_by <- "ON"
+  phone_melt$issue_type <- "The phone number provided may contain errors"
+  phone_melt$old_value <- phone_melt$number
+  
+  phone_log <- data.frame(uuid = phone_melt$uuid, 
+                          agency = phone_melt$q0_3_organization, 
+                          area = phone_melt$a4_site_name3, 
+                          variable = phone_melt$variable, 
+                          issue = phone_melt$issue_type, 
+                          old_value = phone_melt$old_value, 
+                          new_value = phone_melt$new_value, 
+                          fix = phone_melt$fix, 
+                          checked_by = phone_melt$checked_by)
+  
+} else { 
   
   phone_log <- data.frame(uuid = as.character(),
-                        agency = as.character(),
-                        area = as.character(),
-                        variable = as.character(),
-                        issue = as.character(),
-                        old_value = as.character(),
-                        new_value = as.character(),
-                        fix = as.character(),
-                        checked_by = as.character())
+                          agency = as.character(),
+                          area = as.character(),
+                          variable = as.character(),
+                          issue = as.character(),
+                          old_value = as.character(),
+                          new_value = as.character(),
+                          fix = as.character(),
+                          checked_by = as.character())
   
   
   print("No issues with phone numbers. The dataset seems clean.")   }
@@ -294,26 +305,26 @@ if(nrow(formal_red) >=1) {
   formal_red$variable <- "a7_site_population_hh"
   
   formal_log <- data.frame(uuid = formal_red$uuid, 
-                          agency = formal_red$q0_3_organization, 
-                          area = formal_red$a4_site_name3, 
-                          variable = formal_red$variable, 
-                          issue = formal_red$issue_type, 
-                          old_value = formal_red$a7_site_population_hh, 
-                          new_value = formal_red$new_value, 
-                          fix = formal_red$fix, 
-                          checked_by = formal_red$checked_by)
+                           agency = formal_red$q0_3_organization, 
+                           area = formal_red$a4_site_name3, 
+                           variable = formal_red$variable, 
+                           issue = formal_red$issue_type, 
+                           old_value = formal_red$a7_site_population_hh, 
+                           new_value = formal_red$new_value, 
+                           fix = formal_red$fix, 
+                           checked_by = formal_red$checked_by)
   
 } else {
   
   formal_log <- data.frame(uuid = as.character(),
-                        agency = as.character(),
-                        area = as.character(),
-                        variable = as.character(),
-                        issue = as.character(),
-                        old_value = as.character(),
-                        new_value = as.character(),
-                        fix = as.character(),
-                        checked_by = as.character())
+                           agency = as.character(),
+                           area = as.character(),
+                           variable = as.character(),
+                           issue = as.character(),
+                           old_value = as.character(),
+                           new_value = as.character(),
+                           fix = as.character(),
+                           checked_by = as.character())
   
   print("Formal site population size check not needed. The dataset seems clean.")}
 
@@ -323,9 +334,9 @@ if(nrow(formal_red) >=1) {
 ### Check that collective centre is not a makeshift or emergency or transitional or open-air type of shelter
 collective <- select(response, "uuid", "q0_3_organization", "a4_site_name3", "c1_type_of_site", "c9_primary_shelter_type")
 collective <- collective %>% mutate(collective_issue = ifelse((c1_type_of_site == "collective_centre" & (c9_primary_shelter_type == "emergency_shelter" |
-                                                                                      c9_primary_shelter_type == "makeshift_shelter" |
-                                                                                              c9_primary_shelter_type == "transitional_shelter" |
-                                                                                              c9_primary_shelter_type == "open_air_no_shelter")), 1, 0))
+                                                                                                           c9_primary_shelter_type == "makeshift_shelter" |
+                                                                                                           c9_primary_shelter_type == "transitional_shelter" |
+                                                                                                           c9_primary_shelter_type == "open_air_no_shelter")), 1, 0))
 
 
 collective_red <- filter(collective, collective$collective_issue == 1)
@@ -339,26 +350,26 @@ if(nrow(collective_red) >= 1){
   collective_red$variable <- "c9_primary_shelter_type"
   
   collective_log <- data.frame(uuid = collective_red$uuid, 
-                           agency = collective_red$q0_3_organization, 
-                           area = collective_red$a4_site_name3, 
-                           variable = collective_red$variable, 
-                           issue = collective_red$issue_type, 
-                           old_value = collective_red$c9_primary_shelter_type, 
-                           new_value = collective_red$new_value, 
-                           fix = collective_red$fix, 
-                           checked_by = collective_red$checked_by)
+                               agency = collective_red$q0_3_organization, 
+                               area = collective_red$a4_site_name3, 
+                               variable = collective_red$variable, 
+                               issue = collective_red$issue_type, 
+                               old_value = collective_red$c9_primary_shelter_type, 
+                               new_value = collective_red$new_value, 
+                               fix = collective_red$fix, 
+                               checked_by = collective_red$checked_by)
   
 } else {
   
   collective_log <- data.frame(uuid = as.character(),
-                        agency = as.character(),
-                        area = as.character(),
-                        variable = as.character(),
-                        issue = as.character(),
-                        old_value = as.character(),
-                        new_value = as.character(),
-                        fix = as.character(),
-                        checked_by = as.character())
+                               agency = as.character(),
+                               area = as.character(),
+                               variable = as.character(),
+                               issue = as.character(),
+                               old_value = as.character(),
+                               new_value = as.character(),
+                               fix = as.character(),
+                               checked_by = as.character())
   
   print("Collective centre type checks not needed. The dataset seems clean.")}
 
@@ -381,26 +392,26 @@ if (nrow(waste_disposal_red) >= 1){
   waste_disposal_red$variable <- "waste_disposal_services"
   
   waste_disposal_log <- data.frame(uuid = waste_disposal_red$uuid, 
-                               agency = waste_disposal_red$q0_3_organization, 
-                               area = waste_disposal_red$a4_site_name3, 
-                               variable = waste_disposal_red$variable, 
-                               issue = waste_disposal_red$issue_type, 
-                               old_value = waste_disposal_red$waste_disposal_services, 
-                               new_value = waste_disposal_red$new_value, 
-                               fix = waste_disposal_red$fix, 
-                               checked_by = waste_disposal_red$checked_by)
+                                   agency = waste_disposal_red$q0_3_organization, 
+                                   area = waste_disposal_red$a4_site_name3, 
+                                   variable = waste_disposal_red$variable, 
+                                   issue = waste_disposal_red$issue_type, 
+                                   old_value = waste_disposal_red$waste_disposal_services, 
+                                   new_value = waste_disposal_red$new_value, 
+                                   fix = waste_disposal_red$fix, 
+                                   checked_by = waste_disposal_red$checked_by)
   
 } else { 
   
   waste_disposal_log <- data.frame(uuid = as.character(),
-                               agency = as.character(),
-                               area = as.character(),
-                               variable = as.character(),
-                               issue = as.character(),
-                               old_value = as.character(),
-                               new_value = as.character(),
-                               fix = as.character(),
-                               checked_by = as.character())
+                                   agency = as.character(),
+                                   area = as.character(),
+                                   variable = as.character(),
+                                   issue = as.character(),
+                                   old_value = as.character(),
+                                   new_value = as.character(),
+                                   fix = as.character(),
+                                   checked_by = as.character())
   
   print("Waste disposal system checks not needed. The dataset looks clean.") }
 
@@ -410,11 +421,11 @@ if (nrow(waste_disposal_red) >= 1){
 ### Check that adequate WASH services do not include: flush latrine to the open / open defecation / pit uncovered / illegal water connection / unprotected well / surface water
 adequate_wash <- select(response, "uuid", "q0_3_organization", "a4_site_name3", "c10_primary_latrine_type", "c8_primary_water_source", "wash_services")
 adequate_wash <- adequate_wash %>% mutate(adequate_wash_issue = ifelse((wash_services == "adequate" & (c10_primary_latrine_type == "flush_latrine_to_the_open" |
-                                                                                        c10_primary_latrine_type == "open_defecation" |
-                                                                                        c10_primary_latrine_type == "pit_latrine_open" |
-                                                                                        c8_primary_water_source == "illegal_connection_to_piped_network" |
-                                                                                        c8_primary_water_source == "unprotected_well" |
-                                                                                        c8_primary_water_source == "surface_water")), 1, 0))
+                                                                                                         c10_primary_latrine_type == "open_defecation" |
+                                                                                                         c10_primary_latrine_type == "pit_latrine_open" |
+                                                                                                         c8_primary_water_source == "illegal_connection_to_piped_network" |
+                                                                                                         c8_primary_water_source == "unprotected_well" |
+                                                                                                         c8_primary_water_source == "surface_water")), 1, 0))
 
 adequate_wash_red <- filter(adequate_wash, adequate_wash$adequate_wash_issue == 1)
 
@@ -427,14 +438,14 @@ if(nrow(adequate_wash_red)>=1){
   adequate_wash_red$variable <- "c10_primary_latrine_type"
   
   adequate_wash_log <- data.frame(uuid = adequate_wash_red$uuid, 
-                                   agency = adequate_wash_red$q0_3_organization, 
-                                   area = adequate_wash_red$a4_site_name3, 
-                                   variable = adequate_wash_red$variable, 
-                                   issue = adequate_wash_red$issue_type, 
-                                   old_value = adequate_wash_red$c10_primary_latrine_type, 
-                                   new_value = adequate_wash_red$new_value, 
-                                   fix = adequate_wash_red$fix, 
-                                   checked_by = adequate_wash_red$checked_by)
+                                  agency = adequate_wash_red$q0_3_organization, 
+                                  area = adequate_wash_red$a4_site_name3, 
+                                  variable = adequate_wash_red$variable, 
+                                  issue = adequate_wash_red$issue_type, 
+                                  old_value = adequate_wash_red$c10_primary_latrine_type, 
+                                  new_value = adequate_wash_red$new_value, 
+                                  fix = adequate_wash_red$fix, 
+                                  checked_by = adequate_wash_red$checked_by)
   
 } else {
   
@@ -480,16 +491,16 @@ if (nrow(eviction_red) >=1){
 } else {
   
   eviction_log <- data.frame(uuid = as.character(),
-                        agency = as.character(),
-                        area = as.character(),
-                        variable = as.character(),
-                        issue = as.character(),
-                        old_value = as.character(),
-                        new_value = as.character(),
-                        fix = as.character(),
-                        checked_by = as.character())
+                             agency = as.character(),
+                             area = as.character(),
+                             variable = as.character(),
+                             issue = as.character(),
+                             old_value = as.character(),
+                             new_value = as.character(),
+                             fix = as.character(),
+                             checked_by = as.character())
   
-    print("No issues with eviction and type of tennacy has been detected. The dataset seems clean.")}
+  print("No issues with eviction and type of tennacy has been detected. The dataset seems clean.")}
 
 #write.csv(eviction, paste0("./output/eviction_issue_",today,".csv"), row.names = F)
 #browseURL(paste0("./output/eviction_issue_",today,".csv"))
@@ -497,43 +508,43 @@ if (nrow(eviction_red) >=1){
 ### Check cooking stuff
 #cooking <- select(response, "uuid", "q0_3_organization", "a4_site_name3", "c5_fuel_available_in_site_close_proximity", "c6_electricity_solar_power_available_in_site", "primary_cooking_modality")
 #cooking <- cooking %>% mutate(cooking_issue = ifelse((c5_fuel_available_in_site_close_proximity == "yes" | c6_electricity_solar_power_available_in_site == "yes" & 
-                                                        #primary_cooking_modality == "Electrical_stove" | primary_cooking_modality == "Gas_stove"), 0, 1))
+#primary_cooking_modality == "Electrical_stove" | primary_cooking_modality == "Gas_stove"), 0, 1))
 
 #cooking_red <- filter(cooking, cooking$cooking_issue == 1)
 
 
 #if (nrow(cooking_red ) >=1){
-  
-  #cooking_red$new_value <- " "
-  #cooking_red$fix <- "Checked with partner"
-  #cooking_red$checked_by <- "ON"
-  #cooking_red$issue_type <- "Eviction was identied as a risk although the site holds a tennacy agreement"
-  #cooking_red $variable <- "c5_fuel_available_in_site_close_proximity"
-  
-  #cooking_log <- data.frame(uuid = cooking_red$uuid, 
-                             #agency = cooking_red$q0_3_organization, 
-                             #area = cooking_red$a4_site_name3, 
-                             #variable = cooking_red$variable, 
-                             #issue = cooking_red$issue_type, 
-                             #old_value = cooking_red$f1_threats_to_the_site.eviction, 
-                             #new_value = cooking_red$new_value, 
-                             #fix = cooking_red$fix, 
-                             #checked_by = cooking_red$checked_by)
-  
+
+#cooking_red$new_value <- " "
+#cooking_red$fix <- "Checked with partner"
+#cooking_red$checked_by <- "ON"
+#cooking_red$issue_type <- "Eviction was identied as a risk although the site holds a tennacy agreement"
+#cooking_red $variable <- "c5_fuel_available_in_site_close_proximity"
+
+#cooking_log <- data.frame(uuid = cooking_red$uuid, 
+#agency = cooking_red$q0_3_organization, 
+#area = cooking_red$a4_site_name3, 
+#variable = cooking_red$variable, 
+#issue = cooking_red$issue_type, 
+#old_value = cooking_red$f1_threats_to_the_site.eviction, 
+#new_value = cooking_red$new_value, 
+#fix = cooking_red$fix, 
+#checked_by = cooking_red$checked_by)
+
 #} else {
-  
-  #cooking_log <- data.frame(uuid = as.character(),
-                             #agency = as.character(),
-                             #area = as.character(),
-                             #variable = as.character(),
-                             #issue = as.character(),
-                             #old_value = as.character(),
-                             #new_value = as.character(),
-                             #fix = as.character(),
-                             #checked_by = as.character())
-  
-  
-  #print("No issues with cooking and availability of fuel. The dataset seems clean.")}
+
+#cooking_log <- data.frame(uuid = as.character(),
+#agency = as.character(),
+#area = as.character(),
+#variable = as.character(),
+#issue = as.character(),
+#old_value = as.character(),
+#new_value = as.character(),
+#fix = as.character(),
+#checked_by = as.character())
+
+
+#print("No issues with cooking and availability of fuel. The dataset seems clean.")}
 
 ### Check lenght of the survey, 10 = minimum, 40 = maximum (can be changed)
 time_stamp <- select(response, "uuid", "start", "end", "q0_3_organization", "a4_site_name3")
@@ -542,7 +553,7 @@ check_time <- check.time(time_stamp, duration_threshold_lower = 15, duration_thr
 check_time$q0_3_organization <- response$q0_3_organization[match(check_time$uuid, response$uuid)]
 check_time$a4_site_name3 <- response$a4_site_name3[match(check_time$uuid, response$uuid)]
 
- if(nrow(check_time) >= 1){
+if(nrow(check_time) >= 1){
   
   check_time$new_value <- " "
   check_time$fix <- "Checked with partner"
@@ -560,31 +571,31 @@ check_time$a4_site_name3 <- response$a4_site_name3[match(check_time$uuid, respon
                                fix = check_time$fix, 
                                checked_by = check_time$checked_by)
   
- } else {
+} else {
   
   check_time_log <- data.frame(uuid = as.character(),
-                        agency = as.character(),
-                        area = as.character(),
-                        variable = as.character(),
-                        issue = as.character(),
-                        old_value = as.character(),
-                        new_value = as.character(),
-                        fix = as.character(),
-                        checked_by = as.character())
+                               agency = as.character(),
+                               area = as.character(),
+                               variable = as.character(),
+                               issue = as.character(),
+                               old_value = as.character(),
+                               new_value = as.character(),
+                               fix = as.character(),
+                               checked_by = as.character())
   
   
   print("The lenghts of the survey are within acceptable values. No cleaning needed.") }
 
 #### Rbind everything if they exist
 cleaning_log <- plyr::rbind.fill(duplicates_log, 
-                           adequacy_log, 
-                           adequate_wash_log, 
-                           collective_log,
-                           eviction_log,
-                           formal_log,
-                           issue_log,
-                           waste_disposal_log,
-                           gps_issue_log) %>%
+                                 adequacy_log, 
+                                 adequate_wash_log, 
+                                 collective_log,
+                                 eviction_log,
+                                 formal_log,
+                                 issue_log,
+                                 waste_disposal_log,
+                                 gps_issue_log) %>%
   mutate(change = NA)
 
 #write.csv(cleaning_log, paste0("./output/cleaning_log_",today,".csv"), row.names = F)
@@ -598,21 +609,21 @@ write.xlsx(final_log, paste0("./output/CCCM_SiteID_cleaning log_",today,".xlsx")
 browseURL(paste0("./output/CCCM_SiteID_cleaning log_",today,".xlsx"))
 
 #if (nrow(check_time)>=1) {
- # write.xlsx(check_time_log, paste0("./output/CCCM_SiteID_time checks log_",today,".xlsx"))
+# write.xlsx(check_time_log, paste0("./output/CCCM_SiteID_time checks log_",today,".xlsx"))
 #} else {print("Surveys were all between 5 and 40 minutes long.")}           
 
 ### Save everything in one file
 #data_cleaning <- list("duplicated sites" = duplicate_sites,
-                     # "Time stamp check" = check_time,
-                     # "Wrong phone numbers" = phonenumber_df,
-                     # "Outliers and others" = response_issue,
-                     # "Service adequacy vs needs" = check_adequacy,
-                     # "Longitude and latitude" = wrong_lat_long,
-                     # "Number of HH in formal site" = formal,
-                     # "Shelter type in collective shelter" = collective,
-                     # "Waste disposal" = waste_disposal,
-                     # "Adequate WASH facilities" = adequate_wash,
-                     # "Tennecy agreement and eviction" = eviction)
+# "Time stamp check" = check_time,
+# "Wrong phone numbers" = phonenumber_df,
+# "Outliers and others" = response_issue,
+# "Service adequacy vs needs" = check_adequacy,
+# "Longitude and latitude" = wrong_lat_long,
+# "Number of HH in formal site" = formal,
+# "Shelter type in collective shelter" = collective,
+# "Waste disposal" = waste_disposal,
+# "Adequate WASH facilities" = adequate_wash,
+# "Tennecy agreement and eviction" = eviction)
 
 #write.xlsx(data_cleaning, paste0("./output/CCCM_SiteID_data cleaning checks_",today,".xlsx"), colNames = TRUE)
 #browseURL(paste0("./output/CCCM_SiteID_data cleaning checks_",today,".xlsx"))

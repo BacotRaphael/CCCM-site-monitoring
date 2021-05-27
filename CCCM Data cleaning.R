@@ -63,9 +63,21 @@ clean_data <- clog_clean(response, my_log)
 # => move that part in the data cleaning script
 
 # max.id.split.df <- response$a4_site_name %>% sub(".*?_", "",.) %>% as.numeric %>% max(na.rm = T)
-# max.id.split.master <- masterlist$Site_ID %>% sub(".*?_", "",.) %>% as.numeric %>% max(na.rm = T)
 # max.id.split <- max(max.id.split.master, max.id.split.df)
-# latest_id <- masterlist$Site_ID[grepl(paste0("_", max.id.split), masterlist$Site_ID)]
+
+# When new site, new name in english is given at the cleaning log stage
+# Could be a name change to be recorded in the masterlist
+# sequence + new name
+
+max.id.split <- masterlist$Site_ID %>% sub(".*?_", "",.) %>% as.numeric %>% max(na.rm = T)
+latest_id <- masterlist$Site_ID[grepl(paste0("_", max.id.split), masterlist$Site_ID)]
+seq <- (max.id.split+1):(max.id.split+100)
+
+new_sites <- clean_data %>%
+  filter(new_site == 1) %>%
+  mutate(new_site_ID = paste0(a2_district, "_", seq[1:nrow(.)]))                # will create new side IDs
+
+# response <- response %>% mutate(new_site_id = ifelse(a4_site_name == "other", ))
 # response <- response %>% mutate(new_site_id = ifelse(a4_site_name != "other", a4_site_name, paste0(a2_district,"_",numeric_seq$numeric_seq)))
 
 #numeric_seq <- seq(from = 1185, to = 5000)
@@ -179,7 +191,7 @@ final_dashboard <- final_dashboard[moveme(names(final_dashboard), "q0_4_date aft
                                           a5_2_gps_latitude after a5_1_gps_longitude; a6_site_occupation_date_dd_mm_yy after a5_2_gps_latitude; 
                                           a7_site_population_hh after a6_site_occupation_date_dd_mm_yy; a7_site_population_individual after a7_site_population_hh;
                                           a9_Site_Classification after a9_formal_informal")]
- 
+
 write.xlsx(final_dashboard, paste0("./output/dashboard/CCCM_Site Reporting_V2_",today,".xlsx"))
 
 #write.xlsx(final_dataset, paste0("./output/CCCM_SiteReporting_Week 1 Cleaned_",today,".xlsx"))

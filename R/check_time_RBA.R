@@ -19,7 +19,7 @@ check.time <- function(data, duration_threshold_lower=15, duration_threshold_upp
   
   ## Add Issue column
   same_date <- mutate(same_date, issue_type = ifelse((time_short_flag >= 1), "form duration too short",
-                                                     ifelse((time_long_flag >= 1), "form duration too long", "")))
+                                                     ifelse((time_long_flag >= 1), "form duration too long", ""))) # Update original code to put issue_type too long
   
   ## seperate the filtering into those surveys that are too long and those that are too short
   too_short <- same_date %>% dplyr::filter(time_short_flag == 1)
@@ -36,6 +36,7 @@ check.time <- function(data, duration_threshold_lower=15, duration_threshold_upp
     colnames(time_problems)[grep("uuid", colnames(time_problems))] <- "uuid"
     time_problems$variable <- "Completion Duration (min)"
     time_problems$has_issue <- "TRUE"
+    # time_problems$issue_type <- "form duration too short"                     # Deleted as it would put too short for both too long and short surveys.
   
   } else {
     
@@ -44,7 +45,6 @@ check.time <- function(data, duration_threshold_lower=15, duration_threshold_upp
     
     }
 
-  
   time_grab <- time_problems %>% dplyr::select(uuid,duration_min,variable,	has_issue,	issue_type)
   names(time_grab) <- c("uuid",	"value",	"variable",	"has_issue",	"issue_type")
   return(time_grab)
