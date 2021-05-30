@@ -1,6 +1,6 @@
 # CCCM Site Monitoring Tool - Data Cleaning script
-# REACH Yemen - alberto.gualtieri@reach-initiative.org
-# V8
+# REACH Yemen - raphael.bacot@reach-initiative.org
+# V9
 # 09/11/2019
 
 rm(list=ls())
@@ -23,7 +23,7 @@ tool.version <- "V1"                                                            
 # tool.version <- "V2"
 
 rawdata.filename.v1 <- "data/Copy of CCCM_Site_Reporting_Form_V1_Week 8_raw org data.xlsx"    # Update the name of the rawdata filename
-rawdata.filename.v2 <- "Copy of CCCM_Site_Reporting_V2__Week 8_raw org data.xlsx"
+rawdata.filename.v2 <- "data/Copy of CCCM_Site_Reporting_V2__Week 8_raw org data.xlsx"
 tool.filename.v1 <- "data/CCCM_Site_Reporting_Kobo_tool_(V1)_12042021.xlsx"
 tool.filename.v2 <- "data/CCCM_Site_Reporting_Kobo_tool_(V2)_12042021.xlsx"
 sitemasterlist.filename <- "CCCM-site-masterlist-cleaning/data/CCCM_IDP Hosting Site List_March 2021.xlsx"
@@ -63,8 +63,11 @@ external_choices_site <- external_choices %>%
 response$a4_site_name2 <- external_choices_site$`label::english`[match(response$a4_other_site, external_choices_site$`label::arabic`)]
 response <- response %>% mutate(a4_site_name3 = ifelse(!is.na(a4_site_name2), as.character(a4_site_name2), a4_other_site))
 
-# masterlist <- masterlist %>%
-  # mutate(Site_Name_In_Arabic_tidy = gsub("????|????", "", Site_Name_In_Arabic))
+# Trying to harmonise different arabic writings + remove village
+masterlist <- masterlist %>%
+  mutate(Site_Name_In_Arabic_tidy = gsub("???? |???? |", "????", gsub("????????" , "", Site_Name_In_Arabic)))
+test <- masterlist %>% filter(grepl("village", Site_Name)) %>% select(matches("Site_Name"), everything())
+test <- masterlist %>% filter(grepl("????????",Site_Name_In_Arabic)) %>% select(matches("Site_Name"), everything())
 
 response2 <- response %>% 
   select(matches("site_name|other_site"), everything()) %>%
