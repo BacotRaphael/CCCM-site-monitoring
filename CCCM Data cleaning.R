@@ -24,13 +24,17 @@ external_choices <- read.xlsx("data/CCCM_Site_Reporting_Kobo_tool_(V1)_12042021.
   filter(list_name == "sitename") %>% dplyr::rename(a4_site_name = name)
 
 ## Upload data to be cleaned and fix some header names
-response <- read.xlsx("./data/CCCM_Site_Reporting_Form_V1_example raw data.xlsx")%>%
+response <- read.xlsx("./data/CCCM_Site_Reporting_Form_V1_example raw data.xlsx")
+
+response <- read.xlsx("data/Copy of CCCM_Site_Reporting_Form_V1_Week 8_raw org data.xlsx")%>%
   mutate(a4_site_name = a4_other_site,
          id = 1:n(), .before = "deviceid") %>%
   dplyr::rename(index = '_index', uuid = '_uuid')
 
 ## Upload updated cleaning log file
-cleaning_log <- read.xlsx("./output/CCCM_SiteID_cleaning log_2021-05-19.xlsx")
+cleaning_log <- read.xlsx("./output/CCCM_SiteID_cleaning log_2021-05-31.xlsx") %>%
+  mutate(change=T)
+# "./output/CCCM_SiteID_cleaning log_2021-05-19.xlsx"
 # cleaning_log <- read.xlsx("./output/CCCM_SiteID_cleaning log_2021-05-06.xlsx")
 
 # ## Apply cleaning log [edited loop to change latitude & longitude + new format for conflicting variable in priority needs checks]

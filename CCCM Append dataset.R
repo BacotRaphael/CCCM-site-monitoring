@@ -67,7 +67,8 @@ new_int <- plyr::rbind.fill(new_v1, new_v2) %>%
   setNames(tolower(colnames(.)))  %>%                                              # Set names to lower cases to merge with master dataset
   mutate(b1_CCCM_Pillars_existing_on_s.site_administration = ifelse(b1_cccm_pillars_existing_on_s.site_administration__exu == 1, "exu",
                                                                     ifelse(b1_cccm_pillars_existing_on_s.site_administration_scmchaic == 1, "scmchaic",
-                                                                           NA)))
+                                                                           NA))) 
+  # select(-b1_cccm_pillars_existing_on_s.site_administration__exu, -b1_cccm_pillars_existing_on_s.site_administration_scmchaic) ?
 
 ## Append the unique new entries to the final Master ALL Internal (new IDs still need to be added manually)
 new_master_all_int <- plyr::rbind.fill(master_all_int, new_int)
