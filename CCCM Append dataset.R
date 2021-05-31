@@ -69,19 +69,13 @@ new_int <- plyr::rbind.fill(new_v1, new_v2) %>%
                                                                     ifelse(b1_cccm_pillars_existing_on_s.site_administration_scmchaic == 1, "scmchaic",
                                                                            NA)))
 
-## II. Harmonisation of columns headers + recoding of binary/text column when necessary
-
-# col1 <- colnames(new_v1)[grepl("B1", colnames(new_v1))]
-# col2 <- colnames(new_v2)[grepl("B1", colnames(new_v2))]
-# new_v1$B1_CCCM_Pillars_existing_on_s %>% unique
-# new_v2$B1_CCCM_Pillars_existing_on_s %>% unique
-# master_all_int$b1_site_management %>% unique
-
 ## Append the unique new entries to the final Master ALL Internal (new IDs still need to be added manually)
 new_master_all_int <- plyr::rbind.fill(master_all_int, new_int)
 # write.xlsx(new_master_all_int, paste0("./output/internal/CCCM_SiteReporting_All Internal (with some ID)_",today,".xlsx"))
 
-# A. Question threats to the site - Harmonisation of  with past data 
+## II. Harmonisation of columns headers + recoding of binary/text column when necessary
+
+# A. Question "threats to the site" - Harmonisation with past data 
 # Recoding the text column when there is no text entry but binary columns are filled out. 
 col <- colnames(new_master_all_int)[grepl("f1_threats_to_the_site.", colnames(new_master_all_int))]
 for (c in col){
