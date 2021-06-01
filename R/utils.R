@@ -89,15 +89,15 @@ clean.gps <- function(df,x,y){
       (!!sym(x) %>% as.numeric < 20) & (!near(!!sym(x) %>% as.numeric, !!sym(y) %>% as.numeric , tol = 0.2)) ~ "Latitude entered instead of Longitude",
       !!sym(x) %>% as.numeric > 80 ~ "Longitude not in Decimal Degree format",
       grepl("E", !!sym(x)) ~ "Longitude invalid format: mix beteen DD and DMS",
-      grepl("°", !!sym(x)) & !is.na(gsub("°", "", !!sym(x)) %>% as.numeric)  ~ "Longitude invalid format: mix beteen DD and DMS",
-      grepl("°|'", !!sym(x)) ~ "Longitude not in DD but in DMS",
+      grepl("?", !!sym(x)) & !is.na(gsub("?", "", !!sym(x)) %>% as.numeric)  ~ "Longitude invalid format: mix beteen DD and DMS",
+      grepl("?|'", !!sym(x)) ~ "Longitude not in DD but in DMS",
       grepl(",|-|\\/|\\\\", !!sym(x)) ~ "Longitude include invalid characters",
       TRUE ~ ""),
       Longitude_clean = case_when(
         issue_lon == "Invalid Longitude coordinate (0)" ~ NA_real_,
         issue_lon == "Latitude entered instead of Longitude" ~ !!sym(y) %>% as.numeric,
         issue_lon == "Longitude not in Decimal Degree format" ~ NA_real_,
-        issue_lon == "Longitude invalid format: mix beteen DD and DMS" ~ gsub("E|°", "", gsub(" ", "", !!sym(x))) %>% as.numeric,
+        issue_lon == "Longitude invalid format: mix beteen DD and DMS" ~ gsub("E|?", "", gsub(" ", "", !!sym(x))) %>% as.numeric,
         issue_lon == "Longitude not in DD but in DMS" ~ parzer::parse_lon(!!sym(x)) %>% as.numeric,
         issue_lon == "Longitude include invalid characters" ~ gsub(",|-|\\/|\\\\| ", "", !!sym(x)) %>% as.numeric,
         TRUE ~ !!sym(x) %>% as.numeric),
@@ -108,15 +108,15 @@ clean.gps <- function(df,x,y){
         !!sym(y) %>% as.numeric > 80 ~ "Latitude not in Decimal Degree format",
         (!!sym(y) %>% as.numeric > 20) & (!near(!!sym(x) %>% as.numeric, !!sym(y) %>% as.numeric , tol = 0.2)) ~ "Longitude entered instead of Latitude",
         grepl("N", !!sym(y)) ~ "Latitude invalid format: mix beteen DD and DMS",
-        grepl("°", !!sym(y)) & !is.na(gsub("°", "", !!sym(x)) %>% as.numeric)  ~ "Latitude invalid format: mix beteen DD and DMS",
-        grepl("°|'", !!sym(y)) ~ "Latitude not in DD but in DMS",
+        grepl("?", !!sym(y)) & !is.na(gsub("?", "", !!sym(x)) %>% as.numeric)  ~ "Latitude invalid format: mix beteen DD and DMS",
+        grepl("?|'", !!sym(y)) ~ "Latitude not in DD but in DMS",
         grepl(",|-|\\/|\\\\| ", !!sym(y)) ~ "Latitude include invalid characters",
         TRUE ~ ""),
       Latitude_clean = case_when(
         issue_lat == "Invalid Latitude coordinate (0)" ~ NA_real_,
         issue_lat == "Latitude not in Decimal Degree format" ~ NA_real_,
         issue_lat == "Longitude entered instead of Latitude" ~ !!sym(x) %>% as.numeric,
-        issue_lat == "Latitude invalid format: mix beteen DD and DMS" ~ gsub("N|°", "", gsub(" ", "", !!sym(y))) %>% as.numeric,
+        issue_lat == "Latitude invalid format: mix beteen DD and DMS" ~ gsub("N|?", "", gsub(" ", "", !!sym(y))) %>% as.numeric,
         issue_lat == "Latitude not in DD but in DMS" ~ parzer::parse_lat(!!sym(y)) %>% as.numeric,
         issue_lat == "Latitude include invalid characters" ~ gsub(",|-|\\/|\\\\| ", "", !!sym(y)) %>% as.numeric,
         TRUE ~ !!sym(y) %>% as.numeric),
@@ -125,26 +125,59 @@ clean.gps <- function(df,x,y){
   return(df.temp)
 }
 
-# x = response
-# y = masterlist
-# pattern_x = "a4_other_site"
-# by_y = "Site.Name.In.Arabic"
+x = response
+y = masterlist
+pattern_x = "a4_other_site"
+by_y = "Site_Name_In_Arabic"
 
 partial_join <- function(x, y, pattern_x, by_y){
-  # idy_y <- sapply(x[[pattern_x]], grep, y[[by_y]])                              # for each sitename in x, get the row indices in y with corresponding partial matches (as a list)
+  # idy_y <- sapply(x[[pattern_x]], grep, y[[by_y]])                            # for each sitename in x, get the row indices in y with corresponding partial matches (as a list)
   # idy_y <- sapply(x, grep, y[[by_y]])
-  # z <- x[[pattern_x]] %>% str_split(" ") %>% gsub("\\(|\\)", "", .)
-  z <- x[[pattern_x]] %>% str_split(" ") 
-  idy_y <- sapply(z, pmatch, y[[by_y]])
-  idy_y <- lapply(idy_y, function(x) if (sum(!is.na(x))> 0) {x[!is.na(x)]} )
+  # idy_y <- sapply(x[[pattern_x]], grep, y[[by_y]])
+  # idy_y <- lapply(idy_y, function(x) if (sum(!is.na(x)) > 0) {x[!is.na(x) & x!="(" & x!=")"]} )
+  z <- x[[pattern_x]] %>% str_split(" ")                                        # splits the sitename with space as separator to see if any part of the sitename has a corresponding match
+  z <- lapply(z, function(x) paste(x, collapse="|"))
+  idy_y <- sapply(x[[pattern_x]], function(s) {                                 # Return the indice for any match from any of the substring in the sitename
+    if (grepl("NA|(|)", s)) {s <- gsub("NA", "", s)}                            # If there is a NA, clean it
+      if (s == "" | is.na(s)) {s} else {                                        # If there is a blank of NA, just return NA
+          res <- grep(s, y[[by_y]])}})                                          # Otherwise return indices of any of the substring of the sitename entered in arabic
   idx_x <- sapply(seq_along(idy_y), function(i) rep(i, length(idy_y[[i]])))     # calls the corresponding row numbers in x to join them to y (repeats the x match as many time as partial match in y)
   df <- dplyr::bind_cols(x[unlist(idx_x), , drop = F],                          # calls all partial matches rows of x, repeating the multiple matches if necessary
                          y[unlist(idy_y), , drop = F]) %>%                      # calls the partially matching rows of y => bind_cols creates the output dataframe
     select(all_of(pattern_x), all_of(by_y), everything())
-  df <- plyr::rbind.fill(df, x[-unlist(idx_x), , drop = F])                     # add all non matchine
+  df <- plyr::rbind.fill(df, x[-unlist(idx_x), , drop = F])                     # add all other non matching lines 
+  
+  return(df)
+}
+
+partial_join <- function(x, y, pattern_x, by_y){
+  # idy_y <- sapply(x[[pattern_x]], grep, y[[by_y]])                            # for each sitename in x, get the row indices in y with corresponding partial matches (as a list)
+  # idy_y <- sapply(x, grep, y[[by_y]])
+  # z <- x[[pattern_x]] %>% str_split(" ") %>% gsub("\\(|\\)", "", .)
+  z <- x[[pattern_x]] %>% str_split(" ")                                        # splits the sitename with space as separator to see if any part of the sitename has a corresponding match
+  idy_y <- sapply(z, pmatch, y[[by_y]])
+  idy_y <- lapply(idy_y, function(x) if (sum(!is.na(x))> 0) {x[!is.na(x) & x!="(" & x!=")"]} )
+  idx_x <- sapply(seq_along(idy_y), function(i) rep(i, length(idy_y[[i]])))     # calls the corresponding row numbers in x to join them to y (repeats the x match as many time as partial match in y)
+  df <- dplyr::bind_cols(x[unlist(idx_x), , drop = F],                          # calls all partial matches rows of x, repeating the multiple matches if necessary
+                         y[unlist(idy_y), , drop = F]) %>%                      # calls the partially matching rows of y => bind_cols creates the output dataframe
+    select(all_of(pattern_x), all_of(by_y), everything())
+  df <- plyr::rbind.fill(df, x[-unlist(idx_x), , drop = F])                     # add all non matching
   # add the non matching lines 
   return(df)
 }
+
+pmatch("", "")                             # returns NA
+pmatch("m",   c("mean", "median", "mode")) # returns NA
+pmatch("med", c("mean", "median", "mode")) # returns 2
+
+pmatch(c("", "ab", "ab"), c("abc", "ab"), dup = FALSE)
+pmatch(c("", "ab", "ab"), c("abc", "ab"), dup = TRUE)
+
+pmatch(c("", "ab", "ab"), c("abdd", "fab", "tafab"), dup = FALSE)
+pmatch(c("", "ab", "ab"), c("abdd", "fab", "tafab"), dup = TRUE)
+
+## compare
+charmatch(c("", "ab", "ab"), c("abc", "ab"))
 
 clean.gps.old <- function(df,x,y){
   df.temp<-df %>%
@@ -155,8 +188,8 @@ clean.gps.old <- function(df,x,y){
       (!!sym(x) %>% as.numeric < 20) & (!near(!!sym(x) %>% as.numeric, !!sym(y) %>% as.numeric , tol = 0.2)) ~ "Latitude entered instead of Longitude",
       !!sym(x) %>% as.numeric > 80 ~ "Longitude not in Decimal Degree format",
       grepl("E", !!sym(x)) ~ "Longitude invalid format: mix beteen DD and DMS",
-      grepl("°", !!sym(x)) & !is.na(gsub("°", "", !!sym(x)) %>% as.numeric)  ~ "Longitude invalid format: mix beteen DD and DMS",
-      grepl("°|'", !!sym(x)) ~ "Longitude not in DD but in DMS",
+      grepl("?", !!sym(x)) & !is.na(gsub("?", "", !!sym(x)) %>% as.numeric)  ~ "Longitude invalid format: mix beteen DD and DMS",
+      grepl("?|'", !!sym(x)) ~ "Longitude not in DD but in DMS",
       TRUE ~ ""),
       Longitude_clean = case_when(
         issue_lon == "Invalid Longitude coordinate (0)" ~ NA_real_,
@@ -172,8 +205,8 @@ clean.gps.old <- function(df,x,y){
         !!sym(y) %>% as.numeric > 80 ~ "Latitude not in Decimal Degree format",
         (!!sym(y) %>% as.numeric > 20) & (!near(!!sym(x) %>% as.numeric, !!sym(y) %>% as.numeric , tol = 0.2)) ~ "Longitude entered instead of Latitude",
         grepl("N", !!sym(y)) ~ "Latitude invalid format: mix beteen DD and DMS",
-        grepl("°", !!sym(y)) & !is.na(gsub("°", "", !!sym(x)) %>% as.numeric)  ~ "Latitude invalid format: mix beteen DD and DMS",
-        grepl("°|'", !!sym(y)) ~ "Latitude not in DD but in DMS",
+        grepl("?", !!sym(y)) & !is.na(gsub("?", "", !!sym(x)) %>% as.numeric)  ~ "Latitude invalid format: mix beteen DD and DMS",
+        grepl("?|'", !!sym(y)) ~ "Latitude not in DD but in DMS",
         TRUE ~ ""),
       Latitude_clean = case_when(
         issue_lat == "Invalid Latitude coordinate (0)" ~ NA_real_,

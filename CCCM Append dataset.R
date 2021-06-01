@@ -17,9 +17,12 @@ source("./R/moveme.R")
 ### Load kobo choices file to vlook up old site codes
 survey_v1 <- read.xlsx("data/CCCM_Site_Reporting_Kobo_tool_(V1)_12042021.xlsx", sheet = "survey")
 survey_v2 <- read.xlsx("data/CCCM_Site_Reporting_Kobo_tool_(V2)_12042021.xlsx", sheet = "survey")
-choices_v1 <- read.xlsx("data/CCCM_Site_Reporting_Kobo_tool_(V2)_12042021.xlsx", sheet = "choices")
+choices_v1 <- read.xlsx("data/CCCM_Site_Reporting_Kobo_tool_(V1)_12042021.xlsx", sheet = "choices")
 choices_v2 <- read.xlsx("data/CCCM_Site_Reporting_Kobo_tool_(V2)_12042021.xlsx", sheet = "choices")
-choices <- read.csv("./data/kobo/choices.csv", check.names = T) %>% select(-X)
+
+# binding all choices from the two tools together
+choices <- bind_rows(choices_v1, choices_v2) %>% group_by(list_name, name, `label::english`, `label::arabic`) %>% summarise(n=n()) %>% select(-n) %>% ungroup
+# choices <- read.csv("./data/kobo/choices.csv", check.names = T) %>% select(-X)
 external_choicesv1 <- read.xlsx("data/CCCM_Site_Reporting_Kobo_tool_(V1)_12042021.xlsx", sheet = "external_choices") %>% filter(list_name == "sitename")
 external_choicesv2 <- read.xlsx("data/CCCM_Site_Reporting_Kobo_tool_(V2)_12042021.xlsx", sheet = "external_choices") %>% filter(list_name == "sitename")
 
@@ -46,14 +49,14 @@ master_all_int <- read.xlsx("./data/CCCM_Site Reporting List_March 2021_ALL inte
 last_internal_v1 <- read.xlsx("./output/internal/CCCM_SiteReporting_V1 Internal_2021-05-19.xlsx")
 last_internal_v2 <- read.xlsx("./output/internal/CCCM_SiteReporting_V2 Internal_2021-05-19.xlsx")
 
-## If only TRUE it means that no new values have been cleaned
+## If only TRUE it means that no new values have been cleaned - if FALSE, means that there are no surveys in both in current dataset(v1 or v2) and in masterlist
 unique(last_internal_v1$uuid %in% master_all_int$uuid)
 unique(last_internal_v2$uuid %in% master_all_int$uuid)
 
 ## Take latest dataset and remove the duplicated entries using the master
 new_v1 <- anti_join(last_internal_v1, master_all_int, "uuid") %>%
   dplyr::rename(
-    # B1_CCCM_Pillars_existing_on_s.site_administration = B1_CCCM_Pillars_existing_on_s.site_administration__exu,       # check with christine that the idea is to recode the binary into a text question
+    # B1_CCCM_Pillars_existing_on_s.site_administration = B1_CCCM_Pillars_existing_on_s.site_administration__exu,       # check with christine that the idea is to recode the binary into a text question  [either code 1/0 for yes there is an administration, or write as text the name of the administration]
     B1_CCCM_Pillars_existing_on_s.site_management_supervision = B1_CCCM_Pillars_existing_on_s.site_management__cccm_agency,
     d1_most_common_reason_idps_left_place_of_origin.security_concerns_conflict_explosives_lack_of_security_forces_war = d1_most_common_reason_idps_left_place_of_origin.security_concerns_conflict_explosives_lack_of_security_forces)
 
@@ -67,8 +70,8 @@ new_int <- plyr::rbind.fill(new_v1, new_v2) %>%
   setNames(tolower(colnames(.)))  %>%                                              # Set names to lower cases to merge with master dataset
   mutate(b1_CCCM_Pillars_existing_on_s.site_administration = ifelse(b1_cccm_pillars_existing_on_s.site_administration__exu == 1, "exu",
                                                                     ifelse(b1_cccm_pillars_existing_on_s.site_administration_scmchaic == 1, "scmchaic",
-                                                                           NA))) 
-  # select(-b1_cccm_pillars_existing_on_s.site_administration__exu, -b1_cccm_pillars_existing_on_s.site_administration_scmchaic) ?
+                                                                           NA))) %>%
+  select(-b1_cccm_pillars_existing_on_s.site_administration__exu, -b1_cccm_pillars_existing_on_s.site_administration_scmchaic)
 
 ## Append the unique new entries to the final Master ALL Internal (new IDs still need to be added manually)
 new_master_all_int <- plyr::rbind.fill(master_all_int, new_int)
@@ -128,7 +131,6 @@ for (c in col){
 
 # Recoding select one as select multiple, keeping NA when relevant
 # Question Reason for leaving place of origin + primary cooking space question
-
 new_master_all_int <- new_master_all_int %>%
   mutate_at(vars(matches("primary_cooking_space.")), function(x) ifelse(!is.na(x), x,
                                                                         ifelse(new_master_all_int$primary_cooking_space %>% tolower == "not_available", NA,
@@ -143,9 +145,9 @@ new_master_all_int <- new_master_all_int %>%
   select(-c7_presence_of_particularly_vulnerable_groups.marginalized_people, -c7_presence_of_particularly_vulnerable_groups.minorities)
 
 # C.1. Replacing past all past string entries wrongly coded with the correct label from the kobo tool:
-choices.vulnerable <- choices %>% filter(list_name=="qc06R") %>% select(-list_name, -label..arabic) # Extracting the label and names from question
-pattern <- choices.vulnerable$label..english                                    # Extract the labels in english to be replace
-replacement <- choices.vulnerable$name                                          # Extract the replacement correct name
+choices.vulnerable <- choices %>% filter(list_name=="qc06R") %>% select(-list_name, -`label::arabic`) # Extracting the label and names from question
+pattern <- choices.vulnerable$`label::english`                                                        # Extract the labels in english to be replace
+replacement <- choices.vulnerable$name                                                                # Extract the replacement correct name
 new_master_all_int <- new_master_all_int %>%
   mutate(c7_presence_of_particularly_vulnerable_groups = str_replace_all(c7_presence_of_particularly_vulnerable_groups %>% tolower, setNames(replacement, tolower(pattern))),
          c7_presence_of_particularly_vulnerable_groups = gsub(",", "", c7_presence_of_particularly_vulnerable_groups),
@@ -200,7 +202,7 @@ new_master_all_int <- new_master_all_int %>%
 #new_master_all_int$id_check <- NULL
 #new_master_all_int$a4_site_code_final <- NULL
 
-#write.xlsx(new_master_all_int, paste0("./output/internal/CCCM_SiteReporting_All Internal (WithID)_",today,".xlsx"))
+write.xlsx(new_master_all_int, paste0("./output/internal/CCCM_SiteReporting_All Internal (WithID)_",today,".xlsx"))
 
 ################################## EXTERNAL #############################################################
 
@@ -228,7 +230,6 @@ new_ext <- plyr::rbind.fill(new_v1, new_v2)
 ## Append the unique new entries to the final Master ALL Internal
 new_master_all_ext <- plyr::rbind.fill(master_all_ext, new_ext)
 write.xlsx(new_master_all_ext, paste0("./output/external/CCCM_SiteReporting_All External (with some ID)_",today,".xlsx"))
-
 
 ### External Site ID code
 #new_master_all_ext$a4_site_name <- str_trim(new_master_all_ext$a4_site_name, "both")

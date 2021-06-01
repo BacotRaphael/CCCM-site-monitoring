@@ -48,7 +48,7 @@ binary <- "as.number"                                                           
 if (binary == "as.number"){
   choices.binary <- data.frame(list_name = c("binary", "binary"), name = c("1", "0"), `label::english` = c("1", "0"), `label::arabic` = c("1", "0"), check.names = F)  
 } else if (binary == "as.text"){
-  choices.binary <- data.frame(list_name = c("binary", "binary"), name = c("1", "0"), `label::english` = c("Yes", "No"), `label::arabic` = c("نعم", "لا"), check.names = F)
+  choices.binary <- data.frame(list_name = c("binary", "binary"), name = c("1", "0"), `label::english` = c("Yes", "No"), `label::arabic` = c("نعم", "لاء"), check.names = F)
   } else {
     print("invalid tool entered, should be either V1 or V2")}
 choices <- choices %>% bind_rows(choices.binary)
@@ -132,6 +132,8 @@ data_rename_select_multiple_ar <- response %>%
   mutate_at(vars(c("Primary_cooking_space","Safe_cooking_practices","c7_presence_of_particularly_vulnerable_groups", "additional_fire_safety_measures")),
             ~gsub(" ،", "،", gsub("^،", "", str_replace_all(., setNames(paste0("، ",choices.q$`label::arabic`), choices.q$name))))) %>%
   select(Primary_cooking_space, Safe_cooking_practices, c7_presence_of_particularly_vulnerable_groups, additional_fire_safety_measures, 1)
+data_rename_select_multiple_ar$c7_presence_of_particularly_vulnerable_groups %>% unique
+
 
 ## Step 3: merge into one dataset
 data_merge <- cbind(data_rename_en, data_rename_select_multiple, data_norename, dots_merge)       ## Remark: sketchy to use cbind, would be more robust to use leftjoin with uuid?
@@ -147,9 +149,9 @@ data_merge <- data_merge %>%
 data_merge_ar <- data_merge_ar %>%
   mutate_at(vars(matches("B1_CCCM_Pillars_existing_on_s.site_administration_")), ~ifelse(is.na(.), NA,
                                                                                          ifelse(. == 1, "موجودة",
-                                                                                                ifelse(. == 0, "ليس موجودة", .)))) %>%
-  mutate_at(vars(matches("psp_|if_ngo")), ~ifelse(is.na(.), "غير متوفّر", .)) %>%
-  mutate_at(vars(-matches("psp_|if_ngo")), ~ifelse(is.na(.), "لا ينطبق", .))
+                                                                                                ifelse(. == 0, "غير موجودة", .)))) %>%
+  mutate_at(vars(matches("psp_|if_ngo")), ~ifelse(is.na(.), "غير متوفر", .)) %>%             # code psp_ if_ngo columns as "not available" => غير متوفر
+  mutate_at(vars(-matches("psp_|if_ngo")), ~ifelse(is.na(.), "لا ينطبق", .))                  # code the other columns as "not applicable" => لا ينطبق
 
 #data_norename$a8_population_groups_other_than_idps_in_site_select_all_applicable <- str_replace_all(data_norename$a8_population_groups_other_than_idps_in_site_select_all_applicable, pattern = " ", replacement = " - ")
 #data_norename$a8_population_groups_other_than_idps_in_site_select_all_applicable <- str_replace_all(data_norename$a8_population_groups_other_than_idps_in_site_select_all_applicable, pattern = "_", replacement = " ")
@@ -196,11 +198,11 @@ if (tool == "V1"){
 # data_rename_3_ar <- response %>%
 #   mutate(Primary_cooking_space = str_replace_all(Primary_cooking_space, setNames(choices.q$`label::arabic`, choices.q$name)),
 #          Safe_cooking_practices = str_replace_all(Safe_cooking_practices, setNames(choices.q$`label::arabic`, choices.q$name)),
-#          c7_presence_of_particularly_vulnerable_groups = str_replace_all(c7_presence_of_particularly_vulnerable_groups, setNames(paste0("، ",choices.q$`label::arabic`), choices.q$name)))
+#          c7_presence_of_particularly_vulnerable_groups = str_replace_all(c7_presence_of_particularly_vulnerable_groups, setNames(paste0("ÃÂ ",choices.q$`label::arabic`), choices.q$name)))
 # data_rename_3_ar <- response %>%
 #   mutate(Primary_cooking_space = str_replace_all(Primary_cooking_space, setNames(choices.q$`label::arabic`, choices.q$name)),
 #          Safe_cooking_practices = str_replace_all(Safe_cooking_practices, setNames(choices.q$`label::arabic`, choices.q$name)),
-#          c7_presence_of_particularly_vulnerable_groups = gsub(" ،", "،", gsub("^،", "", str_replace_all(c7_presence_of_particularly_vulnerable_groups, setNames(paste0("، ",choices.q$`label::arabic`), choices.q$name)))))
+#          c7_presence_of_particularly_vulnerable_groups = gsub(" ÃÂ", "ÃÂ", gsub("^ÃÂ", "", str_replace_all(c7_presence_of_particularly_vulnerable_groups, setNames(paste0("ÃÂ ",choices.q$`label::arabic`), choices.q$name)))))
 
 
 # Archive: old script used to col the following columns for the data_rename data.frame:
