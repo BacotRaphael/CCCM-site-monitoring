@@ -10,6 +10,36 @@ initialise.cleaning.log <- function() {
              checked_by = as.character()))
 }
 
+# checks = check_site_name
+# question.names = "a4_site_name"
+# issue = "issue"
+# new.value=""
+# add.col = c("Site_ID", "Site_Name", "Site_ID_tidy", "Site_Name_tidy", "Site_ID_partial", "Site_Name_partial")
+# 
+# checks = check_ngo
+# question.names = "q0_3_organization" 
+# issue = "issue"
+# add.col = c("ngo_code_match_other", "ngo_name_en_match_other", "ngo_code_match_other_partial", "ngo_name_en_match_other_partial")
+# q.n <- question.names[1]
+# fix="Checked with partner"
+# checked_by="ON"
+
+add.to.cleaning.log <- function(checks, question.names=c(), issue="", new.value="" , fix="Checked with partner", checked_by="ON", add.col=c("")){
+  for(q.n in question.names){
+    new.entries <- checks %>% filter(flag) %>% 
+      mutate(uuid=uuid,
+             variable=q.n,
+             issue=issue,
+             old_value=!!sym(q.n),
+             new_value=new.value,
+             fix=fix,
+             checked_by=checked_by)
+    new.entries <- new.entries %>% select(all_of(col.cl), any_of(add.col)) %>%
+      arrange(variable, uuid)
+    cleaning.log <<- bind_rows(cleaning.log, new.entries)
+  }
+}
+
 cleaning.log.new.entries <- function(df, var, issue_type ="", new_value=" ", fix="Checked with partner", checked_by="ON") {
   new.entries <- df %>% ungroup() %>%
     mutate(uuid = uuid,
@@ -124,11 +154,11 @@ clean.gps <- function(df,x,y){
     )
   return(df.temp)
 }
-
-x = response
-y = masterlist
-pattern_x = "a4_other_site"
-by_y = "Site_Name_In_Arabic"
+# 
+# x = response
+# y = masterlist
+# pattern_x = "a4_other_site"
+# by_y = "Site_Name_In_Arabic"
 
 partial_join <- function(x, y, pattern_x, by_y){
   # idy_y <- sapply(x[[pattern_x]], grep, y[[by_y]])                            # for each sitename in x, get the row indices in y with corresponding partial matches (as a list)
@@ -150,7 +180,7 @@ partial_join <- function(x, y, pattern_x, by_y){
   return(df)
 }
 
-partial_join <- function(x, y, pattern_x, by_y){
+partial_join_old <- function(x, y, pattern_x, by_y){
   # idy_y <- sapply(x[[pattern_x]], grep, y[[by_y]])                            # for each sitename in x, get the row indices in y with corresponding partial matches (as a list)
   # idy_y <- sapply(x, grep, y[[by_y]])
   # z <- x[[pattern_x]] %>% str_split(" ") %>% gsub("\\(|\\)", "", .)

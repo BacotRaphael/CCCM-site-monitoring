@@ -9,7 +9,7 @@ today <- Sys.Date()
 
 ## Install/Load libraries
 if (!require("pacman")) install.packages("pacman")
-pacman::p_load(tidyverse, data.table, openxlsx, reshape2,sf, leaflet, readxl)
+pacman::p_load(tidyverse, data.table, openxlsx, reshape2,sf, leaflet, readxl, withr, mapview)
 p_load_gh("mabafaba/cleaninginspectoR","impact-initiatives-research/clog")
 
 ## Source
@@ -46,18 +46,16 @@ response <- response %>%
 #response <- cleanHead(response) ## This will gives duplicate colnames, so rather update the tool 
 #response <- cleanHead(response)
 
-## Anonymize dataset 
-# Update sensible columns vector by adding all new headers containing sensible information that is not needed for data followup.
+## Anonymize dataset - Update sensible columns vector by adding all new headers containing sensible information that is not needed for data followup.
 # It will ignore non matching columns, just put all columns from both tools
 sensible.columns <- c("deviceid", "subscriberid", "imei", "phonenumber", "q0_1_enumerator_name", "q0_2_gender", "q1_1_key_informant_name",
                       "q1_2_key_informat_gender", "q1_3_key_informat_mobile_number", "a5_gps_coordinates", "calca11", "__version__", "_id", "_submission_time", "_validation_status")
-
 PII <- response %>%                                                             # personnally identifiable information data.frame 
   select(uuid, any_of(sensible.columns))                                        # any_of() ensures taking only the columns that exist in resposne
 # PII %>% write.csv("/output/pii.csv")
-
 response <- response %>%                                                        
   select(-any_of(sensible.columns))
+
 ## Load survey questions from kobo tool
 survey <- if (tool.version == "V1") {read.xlsx(tool.filename.v1, sheet = "survey")} else if(tool.version == "V2") {read.xlsx(tool.filename.v2, sheet = "survey")} else {print("invalid tool entered, should be either V1 or V2")}
 ## Load survey choices Using kobo to rename the site name and than merge the other column
@@ -68,11 +66,14 @@ external_choices_site <- external_choices %>%
 
 # filter out duplicates sitenames/pcodes
 duplicate.sitenames <- response %>%
-  group_by(a4_site_name) %>% filter(n()>1 & !is.na(a4_site_name) & a4_site_name != "other") %>% ungroup
+  group_by(a4_site_name) %>% 
+  filter(n()>1 & !is.na(a4_site_name) & a4_site_name != "other") %>%
+  ungroup
 response <- response %>% filter(!uuid %in% duplicate.sitenames$uuid)  
 
 # Try to match site name entered in arabic as other entry with masterlist using different approaches
-# Pattern to be cleaned from sitename in arabic: 
+
+# 1. Cleaning specific patterns from arabic sitename in the masterlist: 
 # pattern_english <- c("site", "school", "camp", "mosque", "center", "hospital", "souq", "valley", "building", "city", "street", "neighbourhood")
 pattern_arabic <- c("ال","آل","وادي","موقع","مدرسة","مخيم","مركز","مستشفى","سوق","مبنى","حي ","مدينة","مسجد ")
 replacement <- rep("", length(pattern_arabic))
@@ -96,6 +97,9 @@ response2 <- response %>%
                pattern_x = "a4_other_site", by_y = "Site_Name_In_Arabic_partial") %>%  
   relocate(Site_ID, Site_Name, Site_ID_tidy, Site_Name_tidy, Site_ID_partial, Site_Name_partial, .before = "a4_other_site")
 
+response2 <- response2 %>%                                                      # Apply changes for perfect matches
+  mutate(a4_site_name = ifelse((is.na(a4_site_name) | a4_site_name=="other") & !is.na(Site_ID), Site_ID, a4_site_name))
+  
 duplicate_match <- response2 %>%
   group_by(uuid, a4_other_site) %>% 
   filter(n()>1 & !is.na(Site_Name_In_Arabic_partial)) %>% ungroup               # display the duplicate sitename found with the partial match approach
@@ -109,44 +113,69 @@ if (sum(site.id.to.keep %in% duplicate_match$Site_ID_partial) < length(site.id.t
     print(paste0("You should select as many site id as surveys entries that have multiple match, there are ", length(unique(duplicate_match$uuid)), " sites id to be kept."))}
 
 response2 <- response2 %>% 
-  filter(!Site_ID_partial %in% site.id.to.throw) %>%                            # Filter out duplicate sitename matches
-  mutate(site_name_issue = 
-           ifelse(!a4_site_name %in% external_choices_site$a4_site_name, 1, 0),
-         sum.na.match = 
-           rowSums(across(matches("Site_Name|Site_ID"), ~is.na(.))),
-         site_name_issue_type = ifelse(site_name_issue == 1 & a4_site_name != "other", "Issue with entered sitename. The entered P-code site is not present in the kobo list",
-                                       ifelse(site_name_issue == 1 & a4_site_name == "other" & sum.na.match == 6, "Issue with entered sitename. No potential match were found for the other sitename entered in Arabic.",
-                                                ifelse(site_name_issue == 1 & sum.na.match < 5, "The entered site name is not present in the kobo list. Potential matches to be checked in the columns Site_Name/ID", "")))
-         )
+  filter(!Site_ID_partial %in% site.id.to.throw)                                # Filter out duplicate sitename matches
 
-log_site_name <- response2 %>% filter(site_name_issue == 1) %>%
-  select(uuid, a4_site_name, a4_other_site, starts_with("Site_"), matches("site_name_issue")) %>%
-  mutate(variable = "a4_site_name", new_value = "") %>%
-  dplyr::rename(old_value = a4_site_name, issue = site_name_issue_type, other_sitename_arabic_entered = a4_other_site) %>%
-  select(uuid, variable, old_value, new_value, issue, everything())
+check_site_name <- response2 %>%                                                # Flag, filter and categorize sitename issues
+  mutate(flag = ifelse(!(a4_site_name %in% external_choices_site$a4_site_name) | a4_site_name == "other" | is.na(a4_site_name), T, F),
+         sum.na.match = rowSums(across(matches("Site_Name|Site_ID"), ~is.na(.))),
+         issue = ifelse(flag == T & a4_site_name != "other", "Issue with entered sitename. The entered P-code site is not present in the kobo list",
+                                       ifelse(flag == T & a4_site_name == "other" & sum.na.match == 6, "Issue with entered sitename. No potential match were found for the other sitename entered in Arabic.",
+                                                ifelse(flag == T & a4_site_name == "other" & sum.na.match < 5, "The entered site name is not present in the kobo list. Potential matches to be checked in the columns Site_Name/ID", "Issue with entered sitename."))),
+         agency=q0_3_organization, area=a4_site_name)
+
+# log_site_name <- check_site_name %>% filter(flag == 1) %>%
+#   select(uuid, agency, area, starts_with("Site_"), matches("issue|a4_")) %>%
+#   mutate(variable = "a4_site_name", new_value = "") %>%
+#   dplyr::rename(old_value = area, other_sitename_arabic_entered = a4_other_site) %>%
+#   select(uuid, variable, old_value, new_value, issue, everything())
+
+### Cleaning log columns + initialise cleaning log
+coldf <- c("uuid", "q0_3_organization", "a4_site_name")
+col.cl <- c("uuid", "agency", "area", "variable", "issue", "old_value", "new_value", "fix", "checked_by")
+cleaning.log <- initialise.cleaning.log()
+
+## Add flagged sitenames to the cleaning log
+add.to.cleaning.log(checks = check_site_name,
+                    question.names = "a4_site_name", 
+                    issue = "issue",
+                    add.col = c("a4_other_site", "Site_ID", "Site_Name", "Site_ID_tidy", "Site_Name_tidy", "Site_ID_partial", "Site_Name_partial"))
 
 # Do a partial match for Partner name in arabic from the external 
-choices.ngo <- choices %>% filter(list_name == "ngo") %>% select(-governorate, -list_name) %>% setNames(c("ngo_code", "ngo_name_en", "ngo_name_ar"))
+choices.ngo <- choices %>% filter(list_name == "ngo") %>% 
+  select(-governorate, -list_name) %>% setNames(c("ngo_code", "ngo_name_en", "ngo_name_ar"))
 response3 <- response2 %>%
-  left_join(choices.ngo, by = c("q0_3_organization" = "ngo_code")) %>% 
-  left_join(choices.ngo %>% setNames(paste0(colnames(.), "_match_other")) , by = c("q0_3_organization_other" = "ngo_name_ar_match_other")) %>%
+  left_join(choices.ngo, 
+            by = c("q0_3_organization" = "ngo_code")) %>% 
+  left_join(choices.ngo %>% setNames(paste0(colnames(.), "_match_other")) , 
+            by = c("q0_3_organization_other" = "ngo_name_ar_match_other")) %>%
   partial_join(x = ., y = choices.ngo %>% setNames(paste0(colnames(.), "_match_other_partial")),
                pattern_x = "q0_3_organization_other", by_y = "ngo_name_ar_match_other_partial") %>%
-  select(matches("Site_|a4_"), matches("organization|ngo_"), everything())
+  select(matches("organization"), matches("^ngo_"), matches("Site_|a4_"), everything())
 
-response <- response3 %>%
+response <- response3 %>%                                                       # Apply changes for perfect matches
   mutate(q0_3_organization = ifelse(q0_3_organization == "other" & !is.na(ngo_code_match_other), ngo_code_match_other, q0_3_organization),
-         ngo_name_en = ifelse(ngo_name_en == "Other" & !is.na(ngo_name_en_match_other), ngo_name_en_match_other, ngo_name_en)) 
+         ngo_name_en = ifelse(ngo_name_en == "Other" & !is.na(ngo_name_en_match_other), ngo_name_en_match_other, ngo_name_en))
+
+check_ngo <- response3 %>%                                                      # Flag, filter and categorize organisation name issues
+  mutate(flag = ifelse(q0_3_organization == "other" & is.na(ngo_code_match_other), T, F),
+         issue = ifelse(flag & is.na(ngo_code_match_other) & is.na(ngo_code_match_other_partial),
+                        "Issue with ngo code. No potential match were found for the other organisation name entered.",
+                        ifelse(flag & !(is.na(ngo_code_match_other) & is.na(ngo_code_match_other_partial)), 
+                               "Issue with ngo code. Potential matches to be checked in the columns ngo_code_match_other & ngo_code_match_other_partial", "")),
+         agency=q0_3_organization, area=a4_site_name)
+
+## Add flagged organization names to the cleaning log
+add.to.cleaning.log(checks = check_ngo,
+                    question.names = "q0_3_organization", 
+                    issue = "issue",
+                    add.col = c("ngo_code_match_other", "ngo_name_en_match_other", "ngo_code_match_other_partial", "ngo_name_en_match_other_partial"))
 rm(response2,response3)
 
-organisation_log <- response %>%
-  filter(q0_3_organization == "other")                                          # Select columns for organisation cleaning log
+################################################################################
+### Check 4: Check longitude and latitude
+################################################################################
 
-# Add to cleaning log the ngo name + new name =>
-
-### GPS coordinates - Mapping and check
-
-# load layers from gdb
+## Importing layers
 adm1 <- st_read(dsn = "data/shapes/yem_adm_govyem_cso_ochayemen_20191002_GDB.gdb", layer="yem_admbnda_adm1_govyem_cso")
 adm2 <- st_read(dsn = "data/shapes/yem_adm_govyem_cso_ochayemen_20191002_GDB.gdb", layer="yem_admbnda_adm2_govyem_cso")
 adm3 <- st_read(dsn = "data/shapes/yem_adm_govyem_cso_ochayemen_20191002_GDB.gdb", layer="yem_admbnda_adm3_govyem_cso") # Importing the sbd boundaries
@@ -156,96 +185,114 @@ admin4 <- read.xlsx("data/shapes/yem_administrative_levels_122017.xlsx", sheet =
 admin4 <- admin4 %>% mutate(geometry = mapply(c, longitude, latitude, SIMPLIFY = F) %>% map(st_point)) %>% filter(!(longitude == 0 | latitude == 0))
 
 # Joining site location to boundaries
-df.loc <- response %>% mutate(a5_1_gps_longitude = a5_1_gps_longitude %>% as.numeric,
-                              a5_2_gps_latitude = a5_2_gps_latitude %>% as.numeric ,
-                              geometry = mapply(c, a5_1_gps_longitude, a5_2_gps_latitude, SIMPLIFY = F) %>% map(st_point)) 
+df.loc <- response %>% mutate(longitude = a5_1_gps_longitude %>% as.numeric,
+                              latitude = a5_2_gps_latitude %>% as.numeric ,
+                              geometry = mapply(c, longitude, latitude, SIMPLIFY = F) %>% map(st_point)) 
 
 # Plotting map of non cleaned location, setting as NA any non valid DD GPS coordinate
 m <- leaflet() %>% addTiles() %>%
-  addMarkers(data = df.loc, lng = ~a5_1_gps_longitude, lat = ~a5_2_gps_latitude,
-             label = paste0("Site name: ", df.loc$a4_site_name, ", lon: ", df.loc$a5_1_gps_longitude, ", lat: ", df.loc$a5_2_gps_latitude)) 
+  addMarkers(data = df.loc, lng = ~longitude, lat = ~latitude,
+             label = paste0("Site name: ", df.loc$a4_site_name, ", lon: ", df.loc$longitude, ", lat: ", df.loc$latitude)) 
 m
 
-### Sanitizing longitude and latitude entered coordinates
+################################################################################
+# 1. Sanitizing gps coordinates entries
+################################################################################
 response <- clean.gps(response, "a5_1_gps_longitude", "a5_2_gps_latitude")
 
+################################################################################
+# 2. Trying to flag incorrect GPS points using st_intersection
+################################################################################
+response <- response %>%                                                        # Match admin3 pcode with corresponding english name 
+  left_join(adm3 %>% select(admin3Pcode, admin3Name_en) %>% dplyr::rename(admin3Name_en_df=admin3Name_en), by = c("a3_sub_district" = "admin3Pcode"))
+
+empty.gps.sites <- response %>%
+  filter(is.na(Longitude_clean) | is.na(Latitude_clean) | Longitude_clean == 0 | Latitude_clean == 0)
+
 ### Check in which admin boundaries the GPS location is supposed to fall
-# Add a geometry column to the response dataframe
 response.sf <- response %>%
-  # dplyr::rename(admin2Pcode_df = Dist_ID) %>%                                 # commented as response has no systematic admin1/2 columns => For now partial matching of arabic site names with masterlist gives limited results. 
+  dplyr::mutate(admin2Pcode_df = a2_district,
+                admin3Pcode_df = a3_sub_district) %>%                           # Rename (sub)district column to know it shows district information as in survey (df)               
   filter(!is.na(Longitude_clean) & !is.na(Latitude_clean) & Longitude_clean != 0, Latitude_clean != 0) %>%
-  mutate(SHAPE = mapply(c, as.numeric(Longitude_clean), as.numeric(Latitude_clean), SIMPLIFY = F) %>% map(st_point)) %>%
+  mutate(SHAPE = mapply(c, as.numeric(Longitude_clean), as.numeric(Latitude_clean), SIMPLIFY = F) %>% map(st_point)) %>% # Add a geometry column to the response dataframe
   st_sf(crs = 4326, sf_column_name = "SHAPE")
 response.df <- response.sf %>% st_drop_geometry                                 # Drop the geometry column to be able to do intersect/non-intersection between the two
 
 ## Get match original data with the sbd boundaries corresponding to the entered GPS location
-valid.gps.sf <- st_intersection(response.sf, adm2) %>% st_as_sf()               # will subset to only keep gps entries falling in adm3 existing boundaries [nrows will be lower or equal to original file nrows]
+valid.gps.sf <- st_intersection(response.sf, adm3) %>% st_as_sf()               # will subset to only keep gps entries falling in adm3 existing boundaries [nrows will be lower or equal to original file nrows]
 valid.gps.df <- valid.gps.sf %>% st_drop_geometry %>%                           # Drop the geometry column to be able to do intersect/non-intersection between the two
   select(intersect(colnames(valid.gps.sf), colnames(response.df)))              # select the original df's columns to be able to use setdiff()
 
 ## Step 1 => list the GPS location that falls outside of Yemen boundaries // Here we used the cleaned gps coordinates so it should be zero.
 ##  => Displays the gps entries outside of all adm3 boundaries [shows rows that disappeared when doing st_instersect i.e.]
 non.valid.gps.entries <- setdiff(response.df %>% select(intersect(colnames(response.df), colnames(valid.gps.df))), valid.gps.df) 
+response.df <- response.df %>%
+  mutate(issue.gps = ifelse(uuid %in% non.valid.gps.entries$uuid, "The gps location falls outside of Yemen boundaries", issue.gps))
 
-## Step 1.2 => Look at the response file that only has the valid GPS entries and if the districts/governorate make sense
-response.valid.gps <- valid.gps.sf %>% select(matches("Pcode|Name_en|site_name3"), matches("longitude|latitude"), matches("issue"), everything()) %>% st_drop_geometry
-
-## Step 1.3 Map the sanitized GPS locations and sitenames
-## Step 3 => Test map to display gps points that have issues
-df.adm2 <- st_join(adm2, valid.gps.sf %>% mutate(covered = 1) )
-pal.adm2 <- function(x) return(ifelse(!is.na(x), "indianred", "ghostwhite"))
-df.adm3 <- valid.gps.sf
-
-map <- leaflet() %>%
-  addTiles()%>%
-  addMarkers(data = df.adm3, lng = ~Longitude_clean, lat = ~Latitude_clean,
-             label = paste0("The sitename name in tool is ", df.adm3$a4_other_site, ",\r\nmatched name in masterlist is: ", df.adm3$Site_Name_In_Arabic)) %>%
-  addPolygons(data = df.adm2, color = "#B5B5B5", weight = 2, opacity = 0.5,
-              highlightOptions = highlightOptions(color = "white", weight = 2), fillOpacity = 0.5,
-              fillColor = ~pal.adm2(df.adm2$has.gps.issue),
-              label = paste0(df.adm2$admin2Name_en, " district"))
-
-map
-
-### ISSUE: If response has no admin 2 level, the below lines becomes useless as they aim at highlighing admin2 level columns not corresponding to entered GPS.
-
-## Step 2 => list all entries that have wrong admin names [column admin3RefName_en in original data not corresponding to the boundaries in which GPS location falls]
+## Step 2 => list all entries that have wrong admin names [column a2_district in original data not corresponding to the boundaries in which GPS location falls]
 ## Can add this after joining the admin level from site_name list
-# issue.list <- valid.gps.sf %>%
-#   filter(admin2Pcode_df != admin2Pcode) %>%                                   # here no admin2 as response file had no admin2 column
-#   mutate(issue = "The administrative name entered is not corresponding to the gps location entered") %>%
-#   plyr::rbind.fill(non.valid.gps.entries %>% left_join(response.sf %>% select(Longitude_clean, Latitude_clean, SHAPE), by = c("Longitude_clean", "Latitude_clean"))) %>%
-#   mutate(issue = ifelse(is.na(issue), "The gps location falls outside of Yemen boundaries", issue)) 
-# issue.list.df <- issue.list %>%
-#   select(c("Site_ID", "Site.Name", "Partner.Name", "Governorate.Name", "admin2Name_en", "District.Name"), Longitude_clean, Latitude_clean, issue, Longitude, Latitude, issue.gps)
+valid.gps.sf <- valid.gps.sf %>%
+  mutate(issue.gps = ifelse(admin3Pcode_df != admin3Pcode, "The sub-district name entered is not corresponding to the gps location entered", issue.gps))
+response.df <- response.df %>% left_join(valid.gps.sf %>% st_drop_geometry %>% select(uuid, admin2Pcode, admin2Name_en, admin3Pcode, admin3Name_en) %>% 
+                                           rename_at(vars(-matches("uuid")), ~paste0(., ".gps.matched")), by = "uuid")
+response.df <- response.df %>%
+  mutate(issue.admin3 = ifelse(admin3Pcode.gps.matched != admin3Pcode_df, "The sub-district name entered is not corresponding to the gps location entered", NA))
+# => do cleaning log with both coordinates and admin level for the non matching gps point
+
+response.with.gps <- valid.gps.sf %>% 
+  plyr::rbind.fill(non.valid.gps.entries %>% left_join(response.sf %>% select(a5_1_gps_longitude, a5_2_gps_latitude, SHAPE), by = c("a5_1_gps_longitude", "a5_2_gps_latitude"))) 
 
 ## Step 3 => Test map to display gps points that have issues  
-# df.adm2 <- adm2 %>% st_join(issue.list %>% st_as_sf() %>% select(issue)) %>%
-#   mutate(has.gps.issue = ifelse(!is.na(issue),1,0))
-# df.adm3 <- adm3 %>% st_join(issue.list %>% st_as_sf %>% select(issue)) %>%
-# mutate(has.gps.issue = ifelse(!is.na(issue),1,0))
-# df.adm_loc <- issue.list %>% st_as_sf()
-# pal.adm2 <- function(x) return(ifelse(x!=0, "indianred", "ghostwhite"))
+df.adm2 <- adm2 %>% st_join(response.with.gps %>% st_as_sf() %>% select(issue.gps)) %>%
+  mutate(has.gps.issue = ifelse(!is.na(issue.gps), 1, 0))
+# df.adm3 <- adm3 %>% st_join(response.with.gps %>% st_as_sf %>% select(issue.gps)) %>%
+# mutate(has.gps.issue = ifelse(!is.na(issue.gps), 1, 0))
+df.adm_loc <- response.with.gps %>% filter(!is.na(issue.gps)) %>% st_as_sf()
+pal.adm2 <- function(x) return(ifelse(x!=0, "indianred", "ghostwhite"))
 
-# map <- leaflet() %>%
-#   addPolygons(data=df.adm2, color = "#B5B5B5", weight = 2, opacity = 0.5, 
-#               highlightOptions = highlightOptions(color = "white", weight = 2), fillOpacity = 0.5,
-#               fillColor = ~pal.adm2(df.adm2$has.gps.issue),
-#               label = df.adm2$admin2Name_en) %>% 
-#   addCircles(data = df.adm_loc, stroke = F, fillOpacity = 0.5, radius = 1000,
-#              label = paste0("The admin name entered in dataset is ", df.adm_loc$District.Name, ",\r\nactual district according to GPS location is: ", df.adm_loc$admin2Name_en)) %>%
-#   addTiles() %>%
-#   addMeasure(primaryLengthUnit = "kilometers")
-# map                                                                             # display map
+map <- leaflet() %>%
+  addPolygons(data=df.adm2, color = "#B5B5B5", weight = 2, opacity = 0.5,
+              highlightOptions = highlightOptions(color = "white", weight = 2), fillOpacity = 0.5,
+              fillColor = ~pal.adm2(df.adm2$has.gps.issue),
+              label = df.adm2$admin2Name_en) %>%
+  addMarkers(data = df.adm_loc, label = paste0("Site name: ", df.adm_loc$a4_site_name," - The admin name entered in dataset is ", df.adm_loc$admin3Name_en_df, ",\r\nactual district according to GPS location is: ", df.adm_loc$admin3Name_en)) %>%
+  addTiles()
 
-# gps_issue_log <- response %>% 
-#   select(c("uuid", "q0_3_organization", "a4_site_name3", "a5_1_gps_longitude", "a5_2_gps_latitude", "issue.gps", "Longitude_clean", "Latitude_clean")) %>%
-#   filter(!is.na(issue.gps)) %>%
-#   setnames(old = c("Longitude_clean", "Latitude_clean", "issue.gps", "q0_3_organization", "a4_site_name3"),
-#            new = c("Longitude new value","Latitude new value", "issue", "agency", "area")) %>%
-#   mutate(fix="Checked with partner", checked_by = "ON", variable = paste0("a5_1_gps_longitude, a5_2_gps_latitude"))
+map                                                                             # Display map
+withr::with_dir("./output/",map %>% mapshot(url="sitemap_cleaned_gps.html"))    # Export map as html file
 
-# if (nrow(gps_issue_log) == 0) print("No issues with GPS coodinates have been detected. The dataset seems clean.")
+check_gps <- response.df %>%                                                    # Flagging all gps issues and reworking format to include in cleaning log
+  mutate(flag = ifelse(!is.na(issue.gps), T, F),
+         agency=q0_3_organization, area=a4_site_name) %>%
+  dplyr::rename(issue = issue.gps)
+if (nrow(check_gps %>% filter(flag)) == 0) print("No issues with GPS coodinates have been detected. The dataset seems clean.")
+
+## Add to the cleaning log 
+add.to.cleaning.log(checks = check_gps,
+                    question.names = c("a5_1_gps_longitude", "a5_2_gps_latitude"), 
+                    issue = "issue",
+                    add.col = c("Longitude_clean", "Latitude_clean"))
+# cleaning.log <- cleaning.log  %>% arrange(agency, uuid, variable)               # ! TBD ! Need to arrange by uuid, variable for long lat and otherwise by var.
+
+check_admin_gps <- response.df %>%                                              # Flagging all admin3/Gps that don't match + reworking format to include in cleaning log
+  mutate(flag = ifelse(!is.na(issue.admin3), T, F),
+         agency=q0_3_organization, area=a4_site_name) %>%
+  dplyr::rename(issue = issue.admin3)
+if (nrow(check_admin_gps %>% filter(flag)) == 0) print("GPS coordinates falls within the Sub-district entered in dataset, no issues detected.")
+
+## Add to the cleaning log 
+add.to.cleaning.log(checks = check_gps,
+                    question.names = c("a5_1_gps_longitude", "a5_2_gps_latitude"), 
+                    issue = "issue",
+                    add.col = c("Longitude_clean", "Latitude_clean"))
+# check_admin_gps <- response.df %>%
+#   filter(!is.na(issue.admin3)) %>%
+#   select("uuid", "q0_3_organization", "a4_site_name", "admin3Pcode_df", "admin3Pcode.gps.matched", "issue.admin3", "admin3Name_en_df",  "admin3Name_en.gps.matched", "Longitude_clean", "Latitude_clean") %>%
+#   dplyr::rename(old_value = admin3Pcode_df, new_value = admin3Pcode.gps.matched,
+#                 issue.gps  = issue.admin3) %>%
+#   mutate(variable = "a3_sub_district", .before = "old_value")
+# gps_log <- plyr::rbind.fill(wrong_gps_long, wrong_admin_gps) %>%
+#   dplyr::rename(agency = q0_3_organization, area = a4_site_name)
 
 #write.csv(wrong_lat_long, paste("./output/wrong_lat_long_",today,".csv"), row.names = F)
 #browseURL(paste("./output/wrong_lat_long_",today,".csv"))
@@ -696,4 +743,109 @@ browseURL(paste0("./output/CCCM_SiteID_cleaning log_",today,".xlsx"))
 # response2$site_name_ar_pmatch <- external_choices_site$`label::english`[pmatch(response$a4_other_site, external_choices_site$`label::arabic`)]
 # response$a4_site_name2 <- external_choices_site$`label::english`[match(response$a4_other_site, external_choices_site$`label::arabic`)]
 # response <- response %>% mutate(a4_site_name3 = ifelse(!is.na(a4_site_name2), as.character(a4_site_name2), a4_other_site))
+
+## OLD GPS CHECK 
+
+
+### GPS coordinates - Mapping and check
+# load layers from gdb
+adm1 <- st_read(dsn = "data/shapes/yem_adm_govyem_cso_ochayemen_20191002_GDB.gdb", layer="yem_admbnda_adm1_govyem_cso")
+adm2 <- st_read(dsn = "data/shapes/yem_adm_govyem_cso_ochayemen_20191002_GDB.gdb", layer="yem_admbnda_adm2_govyem_cso")
+adm3 <- st_read(dsn = "data/shapes/yem_adm_govyem_cso_ochayemen_20191002_GDB.gdb", layer="yem_admbnda_adm3_govyem_cso") # Importing the sbd boundaries
+adm3_loc <- st_read(dsn = "data/shapes/yem_adm_govyem_cso_ochayemen_20191002_GDB.gdb", layer="yem_admbndp_adm3_govyem_cso")
+admin4 <- read.xlsx("data/shapes/yem_administrative_levels_122017.xlsx", sheet = "main_locality_standard_v0") %>%
+  dplyr::rename(admin1Pcode = admin1pcode, admin2Pcode = admin2pcode, admin3Pcode = admin3pcode, admin4Pcode = admin4pcode)
+admin4 <- admin4 %>% mutate(geometry = mapply(c, longitude, latitude, SIMPLIFY = F) %>% map(st_point)) %>% filter(!(longitude == 0 | latitude == 0))
+
+# Joining site location to boundaries
+df.loc <- response %>% mutate(a5_1_gps_longitude = a5_1_gps_longitude %>% as.numeric,
+                              a5_2_gps_latitude = a5_2_gps_latitude %>% as.numeric ,
+                              geometry = mapply(c, a5_1_gps_longitude, a5_2_gps_latitude, SIMPLIFY = F) %>% map(st_point)) 
+
+# Plotting map of non cleaned location, setting as NA any non valid DD GPS coordinate
+m <- leaflet() %>% addTiles() %>%
+  addMarkers(data = df.loc, lng = ~a5_1_gps_longitude, lat = ~a5_2_gps_latitude,
+             label = paste0("Site name: ", df.loc$a4_site_name, ", lon: ", df.loc$a5_1_gps_longitude, ", lat: ", df.loc$a5_2_gps_latitude)) 
+m
+
+### Sanitizing longitude and latitude entered coordinates
+response <- clean.gps(response, "a5_1_gps_longitude", "a5_2_gps_latitude")
+
+### Check in which admin boundaries the GPS location is supposed to fall
+# Add a geometry column to the response dataframe
+response.sf <- response %>%
+  # dplyr::rename(admin2Pcode_df = Dist_ID) %>%                                 # commented as response has no systematic admin1/2 columns => For now partial matching of arabic site names with masterlist gives limited results. 
+  filter(!is.na(Longitude_clean) & !is.na(Latitude_clean) & Longitude_clean != 0, Latitude_clean != 0) %>%
+  mutate(SHAPE = mapply(c, as.numeric(Longitude_clean), as.numeric(Latitude_clean), SIMPLIFY = F) %>% map(st_point)) %>%
+  st_sf(crs = 4326, sf_column_name = "SHAPE")
+response.df <- response.sf %>% st_drop_geometry                                 # Drop the geometry column to be able to do intersect/non-intersection between the two
+
+## Get match original data with the sbd boundaries corresponding to the entered GPS location
+valid.gps.sf <- st_intersection(response.sf, adm2) %>% st_as_sf()               # will subset to only keep gps entries falling in adm3 existing boundaries [nrows will be lower or equal to original file nrows]
+valid.gps.df <- valid.gps.sf %>% st_drop_geometry %>%                           # Drop the geometry column to be able to do intersect/non-intersection between the two
+  select(intersect(colnames(valid.gps.sf), colnames(response.df)))              # select the original df's columns to be able to use setdiff()
+
+## Step 1 => list the GPS location that falls outside of Yemen boundaries // Here we used the cleaned gps coordinates so it should be zero.
+##  => Displays the gps entries outside of all adm3 boundaries [shows rows that disappeared when doing st_instersect i.e.]
+non.valid.gps.entries <- setdiff(response.df %>% select(intersect(colnames(response.df), colnames(valid.gps.df))), valid.gps.df) 
+
+## Step 1.2 => Look at the response file that only has the valid GPS entries and if the districts/governorate make sense
+response.valid.gps <- valid.gps.sf %>% select(matches("Pcode|Name_en|site_name3"), matches("longitude|latitude"), matches("issue"), everything()) %>% st_drop_geometry
+
+## Step 1.3 Map the sanitized GPS locations and sitenames
+## Step 3 => Test map to display gps points that have issues
+df.adm2 <- st_join(adm2, valid.gps.sf %>% mutate(covered = 1) )
+pal.adm2 <- function(x) return(ifelse(!is.na(x), "indianred", "ghostwhite"))
+df.adm3 <- valid.gps.sf
+
+map <- leaflet() %>%
+  addTiles()%>%
+  addMarkers(data = df.adm3, lng = ~Longitude_clean, lat = ~Latitude_clean,
+             label = paste0("The sitename name in tool is ", df.adm3$a4_other_site, ",\r\nmatched name in masterlist is: ", df.adm3$Site_Name_In_Arabic)) %>%
+  addPolygons(data = df.adm2, color = "#B5B5B5", weight = 2, opacity = 0.5,
+              highlightOptions = highlightOptions(color = "white", weight = 2), fillOpacity = 0.5,
+              fillColor = ~pal.adm2(df.adm2$has.gps.issue),
+              label = paste0(df.adm2$admin2Name_en, " district"))
+
+map
+
+### ISSUE: If response has no admin 2 level, the below lines becomes useless as they aim at highlighing admin2 level columns not corresponding to entered GPS.
+
+## Step 2 => list all entries that have wrong admin names [column admin3RefName_en in original data not corresponding to the boundaries in which GPS location falls]
+## Can add this after joining the admin level from site_name list
+# issue.list <- valid.gps.sf %>%
+#   filter(admin2Pcode_df != admin2Pcode) %>%                                   # here no admin2 as response file had no admin2 column
+#   mutate(issue = "The administrative name entered is not corresponding to the gps location entered") %>%
+#   plyr::rbind.fill(non.valid.gps.entries %>% left_join(response.sf %>% select(Longitude_clean, Latitude_clean, SHAPE), by = c("Longitude_clean", "Latitude_clean"))) %>%
+#   mutate(issue = ifelse(is.na(issue), "The gps location falls outside of Yemen boundaries", issue)) 
+# issue.list.df <- issue.list %>%
+#   select(c("Site_ID", "Site.Name", "Partner.Name", "Governorate.Name", "admin2Name_en", "District.Name"), Longitude_clean, Latitude_clean, issue, Longitude, Latitude, issue.gps)
+
+## Step 3 => Test map to display gps points that have issues  
+# df.adm2 <- adm2 %>% st_join(issue.list %>% st_as_sf() %>% select(issue)) %>%
+#   mutate(has.gps.issue = ifelse(!is.na(issue),1,0))
+# df.adm3 <- adm3 %>% st_join(issue.list %>% st_as_sf %>% select(issue)) %>%
+# mutate(has.gps.issue = ifelse(!is.na(issue),1,0))
+# df.adm_loc <- issue.list %>% st_as_sf()
+# pal.adm2 <- function(x) return(ifelse(x!=0, "indianred", "ghostwhite"))
+
+# map <- leaflet() %>%
+#   addPolygons(data=df.adm2, color = "#B5B5B5", weight = 2, opacity = 0.5, 
+#               highlightOptions = highlightOptions(color = "white", weight = 2), fillOpacity = 0.5,
+#               fillColor = ~pal.adm2(df.adm2$has.gps.issue),
+#               label = df.adm2$admin2Name_en) %>% 
+#   addCircles(data = df.adm_loc, stroke = F, fillOpacity = 0.5, radius = 1000,
+#              label = paste0("The admin name entered in dataset is ", df.adm_loc$District.Name, ",\r\nactual district according to GPS location is: ", df.adm_loc$admin2Name_en)) %>%
+#   addTiles() %>%
+#   addMeasure(primaryLengthUnit = "kilometers")
+# map                                                                             # display map
+
+# gps_issue_log <- response %>% 
+#   select(c("uuid", "q0_3_organization", "a4_site_name3", "a5_1_gps_longitude", "a5_2_gps_latitude", "issue.gps", "Longitude_clean", "Latitude_clean")) %>%
+#   filter(!is.na(issue.gps)) %>%
+#   setnames(old = c("Longitude_clean", "Latitude_clean", "issue.gps", "q0_3_organization", "a4_site_name3"),
+#            new = c("Longitude new value","Latitude new value", "issue", "agency", "area")) %>%
+#   mutate(fix="Checked with partner", checked_by = "ON", variable = paste0("a5_1_gps_longitude, a5_2_gps_latitude"))
+
+# if (nrow(gps_issue_log) == 0) print("No issues with GPS coodinates have been detected. The dataset seems clean.")
 
