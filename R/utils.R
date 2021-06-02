@@ -24,7 +24,34 @@ initialise.cleaning.log <- function() {
 # fix="Checked with partner"
 # checked_by="ON"
 
+# checks = check_gps
+# question.names = c("a5_1_gps_longitude", "a5_2_gps_latitude")
+# issue = "issue"
+# add.col = c("Longitude_clean", "Latitude_clean")
+# new.value=""
+# checked_by="ON"
+# fix="Checked with partner"
+
 add.to.cleaning.log <- function(checks, question.names=c(), issue="", new.value="" , fix="Checked with partner", checked_by="ON", add.col=c("")){
+  df <- initialise.cleaning.log()
+  if (nrow(checks)>0){
+    for(q.n in question.names){
+      new.entries <- checks %>% filter(flag) %>% 
+        mutate(uuid=uuid,
+               variable=q.n,
+               issue=issue,
+               old_value=!!sym(q.n),
+               new_value=new.value,
+               fix=fix,
+               checked_by=checked_by)
+      new.entries <- new.entries %>% select(all_of(col.cl), any_of(add.col))
+      df <- bind_rows(df, new.entries)
+    }
+    cleaning.log <<- bind_rows(cleaning.log, df %>% arrange(uuid, variable, agency))
+  }
+}
+
+add.to.cleaning.log.old <- function(checks, question.names=c(), issue="", new.value="" , fix="Checked with partner", checked_by="ON", add.col=c("")){
   for(q.n in question.names){
     new.entries <- checks %>% filter(flag) %>% 
       mutate(uuid=uuid,
@@ -34,8 +61,7 @@ add.to.cleaning.log <- function(checks, question.names=c(), issue="", new.value=
              new_value=new.value,
              fix=fix,
              checked_by=checked_by)
-    new.entries <- new.entries %>% select(all_of(col.cl), any_of(add.col)) %>%
-      arrange(variable, uuid)
+    new.entries <- new.entries %>% select(all_of(col.cl), any_of(add.col))
     cleaning.log <<- bind_rows(cleaning.log, new.entries)
   }
 }
@@ -72,7 +98,7 @@ priority.need.checks <- function(df, check=""){
              !!issue.check.col := ifelse(!!sym(check.col) == 1,
                                          paste0(var, " reported as adequate but ", logical.inconsistencies[logical.inconsistencies$service.level.var==var, "priority.need"], " cited as top three priority need. To be checked."), ""))    
   }
-  df<-df %>% select("uuid", "q0_3_organization", "a4_site_name3", all_of(c(col.priority.needs,service.level.var)), matches("_issue|_check"), -rrm_distributions)
+  df<-df %>% select("uuid", "q0_3_organization", "a4_site_name", all_of(c(col.priority.needs,service.level.var)), matches("_issue|_check"), -rrm_distributions)
   list.checks <- colnames(df)[grepl("_check", colnames(df))]
   df.long <- data.frame()
   for (i in seq_len(nrow(df))) {
@@ -80,35 +106,29 @@ priority.need.checks <- function(df, check=""){
       conflicting_variable_old_value <- logical.inconsistencies[logical.inconsistencies$service.level.var==gsub("_check","",col),"priority.need"]
       conflicting_variable <- df[i,] %>% select(matches("priority")) %>% pivot_longer(cols=colnames(.)) %>% filter(value==conflicting_variable_old_value) %>% select(name) %>% as.character
       df.long <- df.long %>% rbind(data.frame(
-        df[i,c("uuid", "q0_3_organization", "a4_site_name3")],
+        df[i,c("uuid", "q0_3_organization", "a4_site_name")],
         variable = gsub("_check", "", col),
         old_value = df[i, gsub("_check", "", col)],
         has.issue = df[i, col],
-        issue_type = df[i, gsub("_check", "_issue", col)],
-        conflicting_variable = conflicting_variable,
-        conflicting_variable_old_value = conflicting_variable_old_value
+        issue = df[i, gsub("_check", "_issue", col)])
+        ) %>% rbind(data.frame(
+          df[i,c("uuid", "q0_3_organization", "a4_site_name")],
+          variable = conflicting_variable,
+          old_value = conflicting_variable_old_value,
+          has.issue = df[i, col],
+          issue = df[i, gsub("_check", "_issue", col)]
+          )
         )
-      )
     }
   }
-  adequacy.log <- df.long %>%                                                                           # Creating adequacy cleaning log
-    filter(has.issue==1) %>% 
-    ungroup() %>%
-    mutate(uuid = uuid,
-           agency = q0_3_organization, 
-           area = a4_site_name3, 
-           variable = var, 
-           issue = issue_type, 
-           old_value = old_value, 
-           new_value = " ",
-           fix="Checked with partner",
-           checked_by="ON",
-           conflicting_variable=conflicting_variable,
-           conflicting_variable_old_value=conflicting_variable_old_value,
-           conflicting_variable_new_value="" ) %>% 
-    select(uuid, agency, area, variable, issue, old_value, new_value, fix, checked_by,conflicting_variable, conflicting_variable_old_value, conflicting_variable_new_value)
-  return(adequacy.log)
+  res <- df.long %>%
+    filter(has.issue==1) %>%
+    mutate(new_value = "",fix="Checked with partner", checked_by="ON") %>%
+    dplyr::rename(agency=q0_3_organization, area=a4_site_name) %>%
+    dplyr::select(uuid, agency, area, variable, issue, old_value, new_value, fix, checked_by)
+  return(res)
 }
+
 
 clean.gps <- function(df,x,y){
   df.temp<-df %>%
@@ -373,8 +393,64 @@ get.old.value.label <- function(cl){
 
 ## Archived code
 
-## phone number check [was not efficient and needed calling colnames manually ]
+## adequacy log [multiple columns format]
+# priority.need.checks.old <- function(df, check=""){
+#   col.priority.needs <- c("i1_top_priority_need", "i2_second_priority_need", "i3_third_priority_need")
+#   service.level.var = df %>% select(c("shelter_maintenance_services":"waste_disposal_services")) %>% colnames
+#   priority.need = c("shelter_maintenance_assistance", "non_food_items", "food", "cash_assistance", 
+#                     "water", "medical_assistance", "education", "livelihood_assistance",
+#                     "protection_services", "nutrition_services", "sanitation_services")
+#   logical.inconsistencies <- data.frame(service.level.var, priority.need)                               # Enable calling conditions between service question header and corresponding priority need choice 
+#   for (var in service.level.var) {
+#     check.col <- paste0(var, "_check")
+#     issue.check.col <- paste0(var, "_issue")
+#     df <- df %>%
+#       mutate(!!check.col := ifelse((!!sym(var) == "adequate") &
+#                                      ((i1_top_priority_need==logical.inconsistencies[logical.inconsistencies$service.level.var==var, "priority.need"]) |
+#                                         (i2_second_priority_need==logical.inconsistencies[logical.inconsistencies$service.level.var==var, "priority.need"]) |
+#                                         (i3_third_priority_need==logical.inconsistencies[logical.inconsistencies$service.level.var==var, "priority.need"])), 1, 0),
+#              !!issue.check.col := ifelse(!!sym(check.col) == 1,
+#                                          paste0(var, " reported as adequate but ", logical.inconsistencies[logical.inconsistencies$service.level.var==var, "priority.need"], " cited as top three priority need. To be checked."), ""))    
+#   }
+#   df<-df %>% select("uuid", "q0_3_organization", "a4_site_name", all_of(c(col.priority.needs,service.level.var)), matches("_issue|_check"), -rrm_distributions)
+#   list.checks <- colnames(df)[grepl("_check", colnames(df))]
+#   df.long <- data.frame()
+#   for (i in seq_len(nrow(df))) {
+#     for (col in list.checks){
+#       conflicting_variable_old_value <- logical.inconsistencies[logical.inconsistencies$service.level.var==gsub("_check","",col),"priority.need"]
+#       conflicting_variable <- df[i,] %>% select(matches("priority")) %>% pivot_longer(cols=colnames(.)) %>% filter(value==conflicting_variable_old_value) %>% select(name) %>% as.character
+#       df.long <- df.long %>% rbind(data.frame(
+#         df[i,c("uuid", "q0_3_organization", "a4_site_name")],
+#         variable = gsub("_check", "", col),
+#         old_value = df[i, gsub("_check", "", col)],
+#         has.issue = df[i, col],
+#         issue_type = df[i, gsub("_check", "_issue", col)],
+#         conflicting_variable = conflicting_variable,
+#         conflicting_variable_old_value = conflicting_variable_old_value
+#       )
+#       )
+#     }
+#   }
+#   adequacy.log <- df.long %>%                                                                           # Creating adequacy cleaning log
+#     filter(has.issue==1) %>% 
+#     ungroup() %>%
+#     mutate(uuid = uuid,
+#            agency = q0_3_organization, 
+#            area = a4_site_name3, 
+#            variable = var, 
+#            issue = issue_type, 
+#            old_value = old_value, 
+#            new_value = " ",
+#            fix="Checked with partner",
+#            checked_by="ON",
+#            conflicting_variable=conflicting_variable,
+#            conflicting_variable_old_value=conflicting_variable_old_value,
+#            conflicting_variable_new_value="" ) %>% 
+#     select(uuid, agency, area, variable, issue, old_value, new_value, fix, checked_by,conflicting_variable, conflicting_variable_old_value, conflicting_variable_new_value)
+#   return(adequacy.log)
+# }
 
+## phone number check [was not efficient and needed calling colnames manually ]
 
 # phonenumber2 <- phonenumber %>% filter(!is.na(b3_exu_fp_mobile_number)) %>% 
 #   mutate(exu_fb_wrong_number = ifelse(grep("^[70|71|73|77|79]", b3_exu_fp_mobile_number), 0, 1))

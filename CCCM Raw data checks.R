@@ -19,23 +19,31 @@ source("./R/utils.R")
 
 ## Paramaters to be updated each month
 
+## Uncomment the relevant tool version and comment the other one
 tool.version <- "V1"                                                            # V1 or V2 update according to the kobo tool used
 # tool.version <- "V2"
 
+## Update the directory for all files each month with the latest version. Beware of getting V1 and V2 right!
 rawdata.filename.v1 <- "data/Copy of CCCM_Site_Reporting_Form_V1_Week 8_raw org data.xlsx"    # Update the name of the rawdata filename
 rawdata.filename.v2 <- "data/Copy of CCCM_Site_Reporting_V2__Week 8_raw org data.xlsx"
 tool.filename.v1 <- "data/CCCM_Site_Reporting_Kobo_tool_(V1)_12042021.xlsx"
 tool.filename.v2 <- "data/CCCM_Site_Reporting_Kobo_tool_(V2)_12042021.xlsx"
-sitemasterlist.filename <- "CCCM-site-masterlist-cleaning/data/CCCM_IDP Hosting Site List_March 2021.xlsx"
+sitemasterlist.filename <- "CCCM-site-masterlist-cleaning/data/CCCM_IDP Hosting Site List_March 2021.xlsx" # To be updated depending on where you put it
 
 ## Load site_name masterlist to match admin names with site_name
-setwd("..")
-masterlist <- read.xlsx(sitemasterlist.filename) %>%
+setwd("..")                                                                     # To be updated depending on where you put it
+masterlist <- read.xlsx(sitemasterlist.filename) %>%                            
   setNames(gsub("\\.", "_", colnames(.)))
 setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
 
-## Load data to be cleaned
+## Tool columns comparison
+# responsev1 <- read.xlsx(rawdata.filename.v1)
+# responsev2 <- read.xlsx(rawdata.filename.v2)
+# colv1 <- colnames(responsev1)
+# colv2 <- colnames(responsev2)
+# col.all <- unique(colv1, colv2)
 
+## Load data to be cleaned
 response <- if (tool.version == "V1") {read.xlsx(rawdata.filename.v1)} else if (tool.version == "V2") {read.xlsx(rawdata.filename.v2)} else {print("invalid tool entered, should be either V1 or V2")}
 response <- response %>%
   mutate(id = 1:n(), .before = "deviceid") %>%
@@ -64,12 +72,28 @@ external_choices <- if (tool.version == "V1") {read.xlsx(tool.filename.v1, sheet
 external_choices_site <- external_choices %>%
   filter(list_name == "sitename") %>% dplyr::rename(a4_site_name = name)
 
-# filter out duplicates sitenames/pcodes
-duplicate.sitenames <- response %>%
-  group_by(a4_site_name) %>% 
-  filter(n()>1 & !is.na(a4_site_name) & a4_site_name != "other") %>%
-  ungroup
-response <- response %>% filter(!uuid %in% duplicate.sitenames$uuid)  
+### Initialize cleaning log
+coldf <- c("uuid", "q0_3_organization", "a4_site_name")
+col.cl <- c("uuid", "agency", "area", "variable", "issue", "old_value", "new_value", "fix", "checked_by")
+cleaning.log <- initialise.cleaning.log()
+
+## Check 0: check that there are no site surveyed twice
+n_occur <- response %>%                                                         # Check duplicates sitenames
+  group_by(a4_site_name) %>%
+  filter(a4_site_name!="other") %>%                                             # Filtering out "other" sitenames entry => should be cleaned beforehand
+  summarise(Freq = n())
+duplicate.site.names <- n_occur %>% filter(Freq>1) %>% select(a4_site_name)
+duplicate.site.names
+check_duplicate_sites <- response %>%
+  mutate(flag = ifelse(a4_site_name %in% duplicate.site.names, T, F),
+         agency=q0_3_organization, area=a4_site_name)
+## Add to the cleaning log 
+add.to.cleaning.log(checks = check_duplicate_sites, question.names = c("a4_site_name"), issue = "Duplicated site name")
+if (nrow(check_duplicate_sites %>% filter(flag))==0) {print ("No sites with identical names have been detected. The dataset seems clean.")}
+if (nrow(check_duplicate_sites %>% filter(a4_site_name=="other"))>0) {print(paste0("There are ", sum(response$a4_site_name == "other"), " sitenames recorded as other. Check later!"))}
+
+#write.csv(duplicate_sites, paste0("./output/duplicated_sites_",today,".csv"), row.names = F)
+#browseURL(paste0("./output/duplicated_sites_",today,".csv"))  
 
 # Try to match site name entered in arabic as other entry with masterlist using different approaches
 
@@ -123,17 +147,6 @@ check_site_name <- response2 %>%                                                
                                                 ifelse(flag == T & a4_site_name == "other" & sum.na.match < 5, "The entered site name is not present in the kobo list. Potential matches to be checked in the columns Site_Name/ID", "Issue with entered sitename."))),
          agency=q0_3_organization, area=a4_site_name)
 
-# log_site_name <- check_site_name %>% filter(flag == 1) %>%
-#   select(uuid, agency, area, starts_with("Site_"), matches("issue|a4_")) %>%
-#   mutate(variable = "a4_site_name", new_value = "") %>%
-#   dplyr::rename(old_value = area, other_sitename_arabic_entered = a4_other_site) %>%
-#   select(uuid, variable, old_value, new_value, issue, everything())
-
-### Cleaning log columns + initialise cleaning log
-coldf <- c("uuid", "q0_3_organization", "a4_site_name")
-col.cl <- c("uuid", "agency", "area", "variable", "issue", "old_value", "new_value", "fix", "checked_by")
-cleaning.log <- initialise.cleaning.log()
-
 ## Add flagged sitenames to the cleaning log
 add.to.cleaning.log(checks = check_site_name,
                     question.names = "a4_site_name", 
@@ -161,7 +174,7 @@ check_ngo <- response3 %>%                                                      
          issue = ifelse(flag & is.na(ngo_code_match_other) & is.na(ngo_code_match_other_partial),
                         "Issue with ngo code. No potential match were found for the other organisation name entered.",
                         ifelse(flag & !(is.na(ngo_code_match_other) & is.na(ngo_code_match_other_partial)), 
-                               "Issue with ngo code. Potential matches to be checked in the columns ngo_code_match_other & ngo_code_match_other_partial", "")),
+                               "Issue with ngo code. Potential matches to be checked in the columns ngo_code_match_other & ngo_code_match_other_partial", NA)),
          agency=q0_3_organization, area=a4_site_name)
 
 ## Add flagged organization names to the cleaning log
@@ -272,7 +285,6 @@ add.to.cleaning.log(checks = check_gps,
                     question.names = c("a5_1_gps_longitude", "a5_2_gps_latitude"), 
                     issue = "issue",
                     add.col = c("Longitude_clean", "Latitude_clean"))
-# cleaning.log <- cleaning.log  %>% arrange(agency, uuid, variable)               # ! TBD ! Need to arrange by uuid, variable for long lat and otherwise by var.
 
 check_admin_gps <- response.df %>%                                              # Flagging all admin3/Gps that don't match + reworking format to include in cleaning log
   mutate(flag = ifelse(!is.na(issue.admin3), T, F),
@@ -281,237 +293,111 @@ check_admin_gps <- response.df %>%                                              
 if (nrow(check_admin_gps %>% filter(flag)) == 0) print("GPS coordinates falls within the Sub-district entered in dataset, no issues detected.")
 
 ## Add to the cleaning log 
-add.to.cleaning.log(checks = check_gps,
-                    question.names = c("a5_1_gps_longitude", "a5_2_gps_latitude"), 
+add.to.cleaning.log(checks = check_admin_gps,
+                    question.names = c("a3_sub_district", "a5_1_gps_longitude", "a5_2_gps_latitude"), 
                     issue = "issue",
-                    add.col = c("Longitude_clean", "Latitude_clean"))
-# check_admin_gps <- response.df %>%
-#   filter(!is.na(issue.admin3)) %>%
-#   select("uuid", "q0_3_organization", "a4_site_name", "admin3Pcode_df", "admin3Pcode.gps.matched", "issue.admin3", "admin3Name_en_df",  "admin3Name_en.gps.matched", "Longitude_clean", "Latitude_clean") %>%
-#   dplyr::rename(old_value = admin3Pcode_df, new_value = admin3Pcode.gps.matched,
-#                 issue.gps  = issue.admin3) %>%
-#   mutate(variable = "a3_sub_district", .before = "old_value")
-# gps_log <- plyr::rbind.fill(wrong_gps_long, wrong_admin_gps) %>%
-#   dplyr::rename(agency = q0_3_organization, area = a4_site_name)
+                    add.col = c("admin3Pcode.gps.matched", "admin3Name_en_df", "admin3Name_en.gps.matched", "Longitude_clean", "Latitude_clean"))
 
 #write.csv(wrong_lat_long, paste("./output/wrong_lat_long_",today,".csv"), row.names = F)
 #browseURL(paste("./output/wrong_lat_long_",today,".csv"))
 
-## Check 0: check that there are no site surveyed twice
-n_occur <- response %>% group_by(a4_site_name3) %>% summarise(Freq = n())
-n_occur %>% filter(Freq>1)
-duplicate_sites <- response[response$a4_site_name3 %in% n_occur$a4_site_name3[n_occur$Freq > 1],]
-duplicates_log <- initialise.cleaning.log()
-if (nrow(duplicate_sites>0)){
-  duplicates_log <- cleaning.log.new.entries(df = duplicate_sites, var = "a4_site_name3", issue_type = "Duplicate site name:  check area code")
-} else print ("No sites with identical names have been detected. The dataset seems clean.")
-#write.csv(duplicate_sites, paste0("./output/duplicated_sites_",today,".csv"), row.names = F)
-#browseURL(paste0("./output/duplicated_sites_",today,".csv"))
-
-## Check 1: run cleaninginspector
-response_issue <- inspect_all(response, "uuid") %>% 
-  filter(!grepl("'other' response. may need recoding|Potentially sensitive information.", issue_type))
-issue_log <- initialise.cleaning.log()
-
-if(nrow(response_issue)>=1) {
-  issue_table <- response_issue %>% mutate(uuid=response[.$index,"uuid",drop=TRUE],
-                                           q0_3_organization=response[.$index,"q0_3_organization", drop=TRUE],
-                                           a4_site_name3 = response[.$index, "a4_site_name3", drop = TRUE])
-  issue_log <- cleaning.log.new.entries(issue_table, var="variable", issue_type="issue_type")
-} else {print("No outliers issues have been detected. The dataset seems clean.")}
+## Check 1: run cleaninginspector => doesn't bring any additionnal [don't use the other, no numerical columns to be checked and duplicates done above]
+# response_issue <- inspect_all(response, "uuid") %>% 
+#   filter(!grepl("'other' response. may need recoding|Potentially sensitive information.", issue_type))
+# issue_log <- initialise.cleaning.log()
+# if(nrow(response_issue)>=1) {
+#   issue_table <- response_issue %>% mutate(uuid=response[.$index,"uuid",drop=TRUE],
+#                                            q0_3_organization=response[.$index,"q0_3_organization", drop=TRUE],
+#                                            a4_site_name3 = response[.$index, "a4_site_name3", drop = TRUE])
+#   issue_log <- cleaning.log.new.entries(issue_table, var="variable", issue_type="issue_type")
+# } else {print("No outliers issues have been detected. The dataset seems clean.")}
 #write.csv(response_issue, paste0("./output/dataset_issues_",today,".csv"), row.names = F)
 #browseURL(paste0("./output/dataset_issues_",today,".csv"))
 
-## Check 2: run extra cleaning analysis
-### Check that the site name is in the correct location - TBD
-
-## Check 3: Check adequacy
+## Check 2: Check adequacy
 ### Check that a service defined as a priority need is not classified as adequate
-# response %>% select(matches("_services|priority"))                               ## TO BE DELETED : Adding errors to check 
-# response[9, "i1_top_priority_need"] <- "medical_assistance"                      ## TO BE DELETED : Adding errors to check
-
-check_adequacy <- select(response, "uuid", "q0_3_organization", "a4_site_name3", c("rrm_distributions":"waste_disposal_services"), "i1_top_priority_need", "i2_second_priority_need", "i3_third_priority_need")
 adequacy_log <- priority.need.checks(response)
-if(nrow(adequacy_log)==0) {print("No issues across avilability and service provisions have been detected. The dataset seems clean.")}
-#write.csv(check_adequacy, paste0("./output/adequacy_issues_",today,".csv"), row.names = F)
+if(nrow(adequacy_log)==0) {
+  print("No issues across avilability and service provisions have been detected. The dataset seems clean.")}
+
+cleaning.log <- bind_rows(cleaning.log, adequacy_log)                           # Add the adequacy issues to general cleaning log                         
+#write.csv(adequacy_log, paste0("./output/adequacy_issues_",today,".csv"), row.names = F)
 #browseURL(paste0("./output/adequacy_issues_",today,".csv"))
 
-
-### Check phone number - still needs to be fixed
-phonenumber <- response %>% select("uuid","q0_3_organization","a4_site_name3", "q1_3_key_informat_mobile_number", "b6_cccm_agency_fp_mobile_number", "b3_exu_fp_mobile_number", "phonenumber") %>% dplyr::rename(phone.number=phonenumber) %>%
+### Check 3: Phone number 
+### Flag all phone numbers in the data that don't start with the correct phone code for Yemen
+phone.col <- c("phonenumber", "q1_3_key_informat_mobile_number", "b3_exu_fp_mobile_number", "b3_SCMCHAIC_fp_number",  "b6_cccm_agency_fp_mobile_number", "b4_smc_agency_fp_mobile_number", "b6_smc_agency_fp_mobile_number", "b5_smc_agency_fp_mobile_number")
+# v <- c(colnames(responsev1)[grepl("mobile|number", colnames(responsev1))], colnames(responsev2)[grepl("mobile|number", colnames(responsev2))]) %>% unique
+# v %in% phone.col                                                                # check that we have all columns with phone numbers from both tools
+phonenumber <- response %>% 
+  select("uuid","q0_3_organization","a4_site_name", any_of(phone.col)) %>%
+  dplyr::rename(phone.number=phonenumber) %>%
   setnames(gsub("_number", ".number", colnames(.)))
-
-phonenumber_df <- phonenumber %>%
-  mutate(across(contains("number"), ~ifelse(grepl("^[70|71|73|77|79]",.) | is.na(.), 0, 1), .names = "{col}_wrong_number"))
-
-phone_melt <- phonenumber_df %>% mutate_at(vars(matches("number")), as.character) %>% 
+phonenumber[1,5]<-"88124124124"                                                 # FAKE ERROR FOR TESTING TO DELETE LATER
+check_phonenumber <- phonenumber %>%
+  mutate(across(contains("number"),                                             
+                ~ifelse(grepl("^[70|71|73|77|79]",.) | is.na(.), 0, 1),         # Create a binary column with 1 for all non NA phone numbers that don't start with 70 or 71 or etc...
+                .names = "{col}_wrong_number"))
+phone_log <- check_phonenumber %>%                                             # Reformat for cleaning log
+  mutate_at(vars(matches("number")), as.character) %>% 
   pivot_longer(cols = colnames(.)[grepl("number", colnames(.))],
                names_to = c("variable", ".value"), names_pattern = "(.*)\\.(.*)") %>%
-  mutate(variable = gsub("phone_number" ,"phonenumber" , paste0(variable,"_number"))) %>% 
-  filter(number_wrong_number==1)
+  mutate(variable = gsub("phone_number" ,"phonenumber" , paste0(variable,"_number")),
+         issue = "The phone number provided may contain errors",
+         old_value = number, new_value = "", 
+         fix="Checked with partner", checked_by="ON") %>% 
+  filter(number_wrong_number==1) %>% select(-number_wrong_number)
+if (nrow(phone_log)==0) {print("No issues with phone numbers. The dataset seems clean.")}
 
-if(nrow(phone_melt)>=1) {
-  
-  phone_melt$new_value <- " "
-  phone_melt$fix <- "Checked with partner"
-  phone_melt$checked_by <- "ON"
-  phone_melt$issue_type <- "The phone number provided may contain errors"
-  phone_melt$old_value <- phone_melt$number
-  
-  phone_log <- data.frame(uuid = phone_melt$uuid, 
-                          agency = phone_melt$q0_3_organization, 
-                          area = phone_melt$a4_site_name3, 
-                          variable = phone_melt$variable, 
-                          issue = phone_melt$issue_type, 
-                          old_value = phone_melt$old_value, 
-                          new_value = phone_melt$new_value, 
-                          fix = phone_melt$fix, 
-                          checked_by = phone_melt$checked_by)
-  
-} else { 
-  
-  phone_log <- data.frame(uuid = as.character(),
-                          agency = as.character(),
-                          area = as.character(),
-                          variable = as.character(),
-                          issue = as.character(),
-                          old_value = as.character(),
-                          new_value = as.character(),
-                          fix = as.character(),
-                          checked_by = as.character())
-  
-  
-  print("No issues with phone numbers. The dataset seems clean.")   }
+cleaning.log <- bind_rows(cleaning.log, phone_log)                              # Add phone issues to the general cleaning log 
 
-### Check that formal sites have more than 20 HH
-formal <- select(response, "uuid", "q0_3_organization", "a4_site_name3", "a7_site_population_hh", "a9_formal_informal")
-formal <- formal %>% mutate(less_than_20 = ifelse((a9_formal_informal == "formal" & a7_site_population_hh < 20), 1,0))
+### Check 4: Ensure that formal sites have more than 20 HH
+check_formal <- response %>%
+  mutate(flag = ifelse((a9_formal_informal == "formal" & as.numeric(a7_site_population_hh) < 20), T, F),
+         issue = ifelse(flag, "The site has been reported as formal but reported number of households is below 20. To be checked", NA)) %>%
+  dplyr::rename(agency=q0_3_organization, area=a4_site_name)
 
-formal_red <- filter(formal, formal$less_than_20 == 1)
+if (nrow(check_formal %>% filter(flag))==0){print("Formal site population size check not needed. The dataset seems clean.")} else {
+  print("Formal site population size check needed. Some site with less than 20 HH have been reported as formal. To be checked")}
 
-if(nrow(formal_red) >=1) {
-  
-  formal_red$new_value <- " "
-  formal_red$fix <- "Checked with partner"
-  formal_red$checked_by <- "ON"
-  formal_red$issue_type <- "Site identied as 'Formal' although the number of HHs is lower than 20"
-  formal_red$variable <- "a7_site_population_hh"
-  
-  formal_log <- data.frame(uuid = formal_red$uuid, 
-                           agency = formal_red$q0_3_organization, 
-                           area = formal_red$a4_site_name3, 
-                           variable = formal_red$variable, 
-                           issue = formal_red$issue_type, 
-                           old_value = formal_red$a7_site_population_hh, 
-                           new_value = formal_red$new_value, 
-                           fix = formal_red$fix, 
-                           checked_by = formal_red$checked_by)
-  
-} else {
-  
-  formal_log <- data.frame(uuid = as.character(),
-                           agency = as.character(),
-                           area = as.character(),
-                           variable = as.character(),
-                           issue = as.character(),
-                           old_value = as.character(),
-                           new_value = as.character(),
-                           fix = as.character(),
-                           checked_by = as.character())
-  
-  print("Formal site population size check not needed. The dataset seems clean.")}
+# Add to the cleaning log
+add.to.cleaning.log(check_formal, question.names = c("a9_formal_informal", "a7_site_population_hh"), issue = "issue")
 
 #write.csv(formal, paste0("./output/formal_site_population_issue_",today,".csv"), row.names = F)
 #browseURL(paste0("./output/formal_site_population_issue_",today,".csv"))
 
-### Check that collective centre is not a makeshift or emergency or transitional or open-air type of shelter
-collective <- select(response, "uuid", "q0_3_organization", "a4_site_name3", "c1_type_of_site", "c9_primary_shelter_type")
-collective <- collective %>% mutate(collective_issue = ifelse((c1_type_of_site == "collective_centre" & (c9_primary_shelter_type == "emergency_shelter" |
-                                                                                                           c9_primary_shelter_type == "makeshift_shelter" |
-                                                                                                           c9_primary_shelter_type == "transitional_shelter" |
-                                                                                                           c9_primary_shelter_type == "open_air_no_shelter")), 1, 0))
+### Check 5: collective centre is not a makeshift or emergency or transitional or open-air type of shelter
+check_collective <- response %>%
+  mutate(flag = ifelse((c1_type_of_site == "collective_centre" & (c9_primary_shelter_type == "emergency_shelter" | 
+                                                                    c9_primary_shelter_type == "makeshift_shelter" |
+                                                                    c9_primary_shelter_type == "transitional_shelter" |
+                                                                    c9_primary_shelter_type == "open_air_no_shelter")), T, F),
+         issue = ifelse(flag, "Primary shelter type marked as 'makeshfit', 'emergency', 'transitional', or 'open-air' although type of site was identified as 'Collective centre'", NA)) %>%
+  dplyr::rename(agency=q0_3_organization, area=a4_site_name)
 
+if (nrow(check_collective %>% filter(flag))==0){print("Collective centre type checks not needed. The dataset seems clean.")} else {
+  print("Some collective centres have been reported as makeshift or emergency or transitional or open-air type of shelter. To be checked")}
 
-collective_red <- filter(collective, collective$collective_issue == 1)
-
-if(nrow(collective_red) >= 1){
-  
-  collective_red$new_value <- " "
-  collective_red$fix <- "Checked with partner"
-  collective_red$checked_by <- "ON"
-  collective_red$issue_type <- "Primary shelter type marked as 'makeshfit', 'emergency', 'transitional', or 'open-air' although type of site was identified as 'Collective centre'"
-  collective_red$variable <- "c9_primary_shelter_type"
-  
-  collective_log <- data.frame(uuid = collective_red$uuid, 
-                               agency = collective_red$q0_3_organization, 
-                               area = collective_red$a4_site_name3, 
-                               variable = collective_red$variable, 
-                               issue = collective_red$issue_type, 
-                               old_value = collective_red$c9_primary_shelter_type, 
-                               new_value = collective_red$new_value, 
-                               fix = collective_red$fix, 
-                               checked_by = collective_red$checked_by)
-  
-} else {
-  
-  collective_log <- data.frame(uuid = as.character(),
-                               agency = as.character(),
-                               area = as.character(),
-                               variable = as.character(),
-                               issue = as.character(),
-                               old_value = as.character(),
-                               new_value = as.character(),
-                               fix = as.character(),
-                               checked_by = as.character())
-  
-  print("Collective centre type checks not needed. The dataset seems clean.")}
-
+# Add to the cleaning log
+add.to.cleaning.log(check_formal, question.names = c("c1_type_of_site", "c9_primary_shelter_type"), issue = "issue")
 #write.csv(collective, paste0("./output/collective_centre_issue_",today,".csv"), row.names = F)
 #browseURL(paste0("./output/collective_centre_issue_",today,".csv"))
 
-### Check that waste disposal cannot be "non-existant" if they selected flush latrines
-waste_disposal <- select(response, "uuid", "q0_3_organization", "a4_site_name3", "c10_primary_latrine_type", "waste_disposal_services")
-waste_disposal <- waste_disposal %>% mutate(waste_disposal_issue = ifelse((waste_disposal_services == "non_existant" & c10_primary_latrine_type == "flush_latrine_to_tank_sewage_system_pit"), 1, 0))
+### Check 6: Waste disposal cannot be "non-existent" if they selected flush latrines
+check_waste_disposal <- response %>% 
+  mutate(flag = ifelse((waste_disposal_services == "non_existant" & c10_primary_latrine_type == "flush_latrine_to_tank_sewage_system_pit"), T, F),
+         issue = "Waste disposal marked as 'non-existant' although  'flush latrines' was selected as primary latrine type") %>%
+  dplyr::rename(agency=q0_3_organization, area=a4_site_name)
 
-waste_disposal_red <- filter(waste_disposal, waste_disposal$waste_disposal_issue == 1)
+if (nrow(check_waste_disposal %>% filter(flag))==0){print("Waste disposal system checks not needed. The dataset looks clean.")} else {
+  print("Some site have reported having lush latrines while reporting waste disposal as non-existent. To be checked")}
 
-
-if (nrow(waste_disposal_red) >= 1){
-  
-  waste_disposal_red$new_value <- " "
-  waste_disposal_red$fix <- "Checked with partner"
-  waste_disposal_red$checked_by <- "ON"
-  waste_disposal_red$issue_type <- "Waste disposal marked as 'non-existant' although  'flush latrines' was selected as primary latrine type"
-  waste_disposal_red$variable <- "waste_disposal_services"
-  
-  waste_disposal_log <- data.frame(uuid = waste_disposal_red$uuid, 
-                                   agency = waste_disposal_red$q0_3_organization, 
-                                   area = waste_disposal_red$a4_site_name3, 
-                                   variable = waste_disposal_red$variable, 
-                                   issue = waste_disposal_red$issue_type, 
-                                   old_value = waste_disposal_red$waste_disposal_services, 
-                                   new_value = waste_disposal_red$new_value, 
-                                   fix = waste_disposal_red$fix, 
-                                   checked_by = waste_disposal_red$checked_by)
-  
-} else { 
-  
-  waste_disposal_log <- data.frame(uuid = as.character(),
-                                   agency = as.character(),
-                                   area = as.character(),
-                                   variable = as.character(),
-                                   issue = as.character(),
-                                   old_value = as.character(),
-                                   new_value = as.character(),
-                                   fix = as.character(),
-                                   checked_by = as.character())
-  
-  print("Waste disposal system checks not needed. The dataset looks clean.") }
-
+# Add to the cleaning log
+add.to.cleaning.log(check_formal, question.names = c("waste_disposal_services", "c10_primary_latrine_type"), issue = "issue")
 #write.csv(waste_disposal, paste0("./output/waste_disposal_issue_",today,".csv"), row.names = F)
 #browseURL(paste0("./output/waste_disposal_issue_",today,".csv"))
 
-### Check that adequate WASH services do not include: flush latrine to the open / open defecation / pit uncovered / illegal water connection / unprotected well / surface water
+### Check 7: that adequate WASH services do not include: flush latrine to the open / open defecation / pit uncovered / illegal water connection / unprotected well / surface water
 adequate_wash <- select(response, "uuid", "q0_3_organization", "a4_site_name3", "c10_primary_latrine_type", "c8_primary_water_source", "wash_services")
 adequate_wash <- adequate_wash %>% mutate(adequate_wash_issue = ifelse((wash_services == "adequate" & (c10_primary_latrine_type == "flush_latrine_to_the_open" |
                                                                                                          c10_primary_latrine_type == "open_defecation" |
