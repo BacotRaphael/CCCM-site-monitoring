@@ -1,89 +1,9 @@
-initialise.cleaning.log <- function() {
-  return(data.frame(uuid = as.character(), 
-             agency = as.character(), 
-             area = as.character(), 
-             variable = as.character(), 
-             issue = as.character(), 
-             old_value = as.character(),
-             new_value = as.character(), 
-             fix = as.character(), 
-             checked_by = as.character()))
-}
-
-# checks = check_site_name
-# question.names = "a4_site_name"
-# issue = "issue"
-# new.value=""
-# add.col = c("Site_ID", "Site_Name", "Site_ID_tidy", "Site_Name_tidy", "Site_ID_partial", "Site_Name_partial")
-# 
-# checks = check_ngo
-# question.names = "q0_3_organization" 
-# issue = "issue"
-# add.col = c("ngo_code_match_other", "ngo_name_en_match_other", "ngo_code_match_other_partial", "ngo_name_en_match_other_partial")
-# q.n <- question.names[1]
-# fix="Checked with partner"
-# checked_by="ON"
-
-# checks = check_gps
-# question.names = c("a5_1_gps_longitude", "a5_2_gps_latitude")
-# issue = "issue"
-# add.col = c("Longitude_clean", "Latitude_clean")
-# new.value=""
-# checked_by="ON"
-# fix="Checked with partner"
-
-add.to.cleaning.log <- function(checks, question.names=c(), issue="", new.value="" , fix="Checked with partner", checked_by="ON", add.col=c("")){
-  df <- initialise.cleaning.log()
-  if (nrow(checks)>0){
-    for(q.n in question.names){
-      new.entries <- checks %>% filter(flag) %>% 
-        mutate(uuid=uuid,
-               variable=q.n,
-               issue=issue,
-               old_value=!!sym(q.n),
-               new_value=new.value,
-               fix=fix,
-               checked_by=checked_by)
-      new.entries <- new.entries %>% select(all_of(col.cl), any_of(add.col))
-      df <- bind_rows(df, new.entries)
-    }
-    cleaning.log <<- bind_rows(cleaning.log, df %>% arrange(uuid, variable, agency))
-  }
-}
-
-add.to.cleaning.log.old <- function(checks, question.names=c(), issue="", new.value="" , fix="Checked with partner", checked_by="ON", add.col=c("")){
-  for(q.n in question.names){
-    new.entries <- checks %>% filter(flag) %>% 
-      mutate(uuid=uuid,
-             variable=q.n,
-             issue=issue,
-             old_value=!!sym(q.n),
-             new_value=new.value,
-             fix=fix,
-             checked_by=checked_by)
-    new.entries <- new.entries %>% select(all_of(col.cl), any_of(add.col))
-    cleaning.log <<- bind_rows(cleaning.log, new.entries)
-  }
-}
-
-cleaning.log.new.entries <- function(df, var, issue_type ="", new_value=" ", fix="Checked with partner", checked_by="ON") {
-  new.entries <- df %>% ungroup() %>%
-    mutate(uuid = uuid,
-           agency = q0_3_organization, 
-           area = a4_site_name3, 
-           variable = var, 
-           issue = issue_type, 
-           old_value = !!sym(var), 
-           new_value = new_value, 
-           fix = fix, 
-           checked_by = checked_by) %>% 
-    select(uuid, agency, area, variable, issue, old_value, new_value, fix, checked_by)
-}
+# Cleaning functions
 
 priority.need.checks <- function(df, check=""){
   col.priority.needs <- c("i1_top_priority_need", "i2_second_priority_need", "i3_third_priority_need")
-  service.level.var = df %>% select(c("shelter_maintenance_services":"waste_disposal_services")) %>% colnames
-  priority.need = c("shelter_maintenance_assistance", "non_food_items", "food", "cash_assistance", 
+  service.level.var <- df %>% select(c("shelter_maintenance_services":"waste_disposal_services")) %>% colnames
+  priority.need <- c("shelter_maintenance_assistance", "non_food_items", "food", "cash_assistance", 
                     "water", "medical_assistance", "education", "livelihood_assistance",
                     "protection_services", "nutrition_services", "sanitation_services")
   logical.inconsistencies <- data.frame(service.level.var, priority.need)                               # Enable calling conditions between service question header and corresponding priority need choice 
@@ -123,12 +43,12 @@ priority.need.checks <- function(df, check=""){
   }
   res <- df.long %>%
     filter(has.issue==1) %>%
-    mutate(new_value = "",fix="Checked with partner", checked_by="ON") %>%
+    mutate(new_value = "",fix="Checked with partner", checked_by="ON", 
+           check_id = paste0(lapply(issue, function(x) str_split(x, " ")[[1]][1]), "_priority_need_check")) %>%
     dplyr::rename(agency=q0_3_organization, area=a4_site_name) %>%
-    dplyr::select(uuid, agency, area, variable, issue, old_value, new_value, fix, checked_by)
+    dplyr::select(uuid, agency, area, variable, issue, check_id, old_value, new_value, fix, checked_by)
   return(res)
 }
-
 
 clean.gps <- function(df,x,y){
   df.temp<-df %>%
@@ -170,11 +90,11 @@ clean.gps <- function(df,x,y){
         issue_lat == "Latitude not in DD but in DMS" ~ parzer::parse_lat(!!sym(y)) %>% as.numeric,
         issue_lat == "Latitude include invalid characters" ~ gsub(",|-|\\/|\\\\| ", "", !!sym(y)) %>% as.numeric,
         TRUE ~ !!sym(y) %>% as.numeric),
-      issue.gps = ifelse((issue_lon!="") |  (issue_lat!=""), paste0(issue_lon,", ", issue_lat), NA)
+      issue.gps = ifelse((issue_lon!="") | (issue_lat!=""), paste0(issue_lon,", ", issue_lat), NA)
     )
   return(df.temp)
 }
-# 
+
 # x = response
 # y = masterlist
 # pattern_x = "a4_other_site"
@@ -200,6 +120,324 @@ partial_join <- function(x, y, pattern_x, by_y){
   return(df)
 }
 
+# Cleaning log functions
+initialise.cleaning.log <- function() {
+  return(data.frame(uuid = as.character(), 
+                    agency = as.character(), 
+                    area = as.character(), 
+                    variable = as.character(), 
+                    issue = as.character(), 
+                    old_value = as.character(),
+                    new_value = as.character(), 
+                    fix = as.character(), 
+                    checked_by = as.character()))
+}
+
+add.to.cleaning.log <- function(checks, check_id, question.names=c(), issue="", new.value="" , fix="Checked with partner", checked_by="ON", add.col=c("")){
+  df <- initialise.cleaning.log()
+  if (nrow(checks)>0){
+    for(q.n in question.names){
+      new.entries <- checks %>% filter(flag) %>% 
+        mutate(uuid=uuid,
+               variable=q.n,
+               issue=issue,
+               check_id=check_id,
+               old_value=!!sym(q.n),
+               new_value=new.value,
+               fix=fix,
+               checked_by=checked_by)
+      new.entries <- new.entries %>% select(all_of(col.cl), any_of(add.col))
+      df <- bind_rows(df, new.entries)
+    }
+    cleaning.log <<- bind_rows(cleaning.log, df %>% arrange(uuid, variable, agency))
+  }
+}
+
+data.validation.list <- function(){
+  choicelist <- get.select.db() %>% dplyr::select(name, choices)                  # extract list of valid answer for all survey
+  choice_validation <- choicelist %>% transpose %>% setNames(.[1,]) %>% slice(-1) %>% mutate_all(~str_split(.,";\n")) 
+  nrow_validation <- lapply(choice_validation, function(x) length(x[[1]])) %>% unlist %>% max
+  data.val <<- data.frame(matrix(NA, nrow = nrow_validation, ncol = 0))
+  for (c in colnames(choice_validation)){
+    data.val <<- data.val %>% mutate(!!sym(c) := c(unlist(choice_validation[[c]]), rep(NA, nrow_validation-length(choice_validation[[c]][[1]]))))
+  }
+}
+
+get.col.range <- function(variable){
+  column.number <- which(colnames(data.val)==variable)
+  all <- expand.grid(LETTERS, LETTERS)
+  all <- all[order(all$Var1,all$Var2),]
+  alphabet <- c(LETTERS, do.call('paste0',all))
+  col.excel <- alphabet[column.number]
+  nrow <- nrow(data.val %>% filter(!is.na(!!sym(variable))))
+  range.vect <- c("$", col.excel, "$2:$", col.excel, "$", (nrow+2))             ## nrow + 2 => to keep an additionnal field in drop down list to be updated if needed by partner // if you want to keep it strict, nrow + 1
+  range <- paste(range.vect, sep="", collapse="")
+  value.sheet <- paste("'Choices validation'!")
+  value <- paste(value.sheet, range, sep="", collapse="")
+  return(value)
+}
+
+save.follow.up.requests <- function(cl, filename.out="output/test.xlsx"){
+  # save follow-up requests
+  wb <- createWorkbook()
+  addWorksheet(wb, "Follow-up")
+  addWorksheet(wb, "Choices validation")
+  writeData(wb = wb, x = cl, sheet = "Follow-up", startRow = 1)
+  
+  data.validation.list()
+  writeData(wb = wb, x = data.val, sheet = "Choices validation", startRow = 1)
+  
+  style.col.color <- createStyle(fgFill="#E5FFCC", border="TopBottomLeftRight", borderColour="#000000")
+  style.col.color.first <- createStyle(textDecoration="bold", fgFill="#E5FFCC",
+                                       border="TopBottomLeftRight", borderColour="#000000", wrapText=F)
+  
+  addStyle(wb, "Follow-up", style = style.col.color, rows = 1:(nrow(cl)+1), cols=4)
+  addStyle(wb, "Follow-up", style = style.col.color, rows = 1:(nrow(cl)+1), cols=5)
+  col.style <- createStyle(textDecoration="bold", fgFill="#CECECE",halign="center",
+                           border="TopBottomLeftRight", borderColour="#000000")
+  
+  setColWidths(wb, "Follow-up", cols=2, widths=15)
+  setColWidths(wb, "Follow-up", cols=3, widths=15)
+  setColWidths(wb, "Follow-up", cols=c(1,4,8:9), widths="auto")
+  setColWidths(wb, "Follow-up", cols=5, widths=60)
+  setColWidths(wb, "Follow-up", cols=6, widths=15)
+  setColWidths(wb, "Follow-up", cols=7, widths=15)
+  setColWidths(wb, "Follow-up", cols=10, widths=15)
+  
+  addStyle(wb, "Follow-up", style = createStyle(wrapText=T), rows = 1:(ncol(cl)+1), cols=6)
+  addStyle(wb, "Follow-up", style = createStyle(wrapText=T), rows = 1:(ncol(cl)+1), cols=7)
+  addStyle(wb, "Follow-up", style = col.style, rows = 1, cols=1:dim(cl)[2])
+  addStyle(wb, "Follow-up", style = style.col.color.first, rows = 1, cols=4)
+  addStyle(wb, "Follow-up", style = style.col.color.first, rows = 1, cols=5)
+  
+  col.id <- which(colnames(cl)=="old_value")
+  random.color <- ""
+  for (r in 2:nrow(cl)){
+    if(as.character(cl[r, "uuid"])==as.character(cl[r-1, "uuid"]) & 
+       as.character(cl[r, "check_id"])==as.character(cl[r-1, "check_id"])){
+      if (random.color == "") random.color <- randomColor(1, luminosity = "light")
+      addStyle(wb, "Follow-up", style = createStyle(fgFill=random.color, wrapText=T), 
+               rows = r:(r+1), cols=col.id)
+    } else random.color=""
+  }
+  
+  for (r in 1:nrow(cl)){
+    if (cl[r,"variable"] %in% colnames(data.val)){
+      dataValidation(wb, "Follow-up", cols = which(colnames(cl)=="new_value"),
+                     rows = r+1, type = "list",
+                     value = get.col.range(cl[r,"variable"]))
+    }
+  }
+  saveWorkbook(wb, filename.out, overwrite = TRUE)
+} 
+
+get.ref.question <- function(x){
+  x.1 <- str_split(x, "\\{")[[1]][2]
+  return(str_split(x.1, "\\}")[[1]][1])
+}
+get.choice.list.name <- function(x){
+  x.1 <- str_split(x, " ")[[1]]
+  if (length(x.1)==1) return(NA)
+  else return(x.1[2])
+}
+get.q.type <- function(x) return(str_split(x, " ")[[1]][1])
+
+get.select.db <- function(){
+  # list of choices for each list_name (from TOOL_CHOICES)
+  list.choices <- choices_all %>% filter(!is.na(list_name)) %>% group_by(list_name) %>% 
+    mutate(choices=paste(name, collapse=";\n"),
+           choices.label=paste(`label::english`, collapse=";\n")) %>% 
+    summarise(choices=choices[1], choices.label=choices.label[1])
+  # list of external choices for each list_name
+  # list.choices.external <- external_choices %>% filter(!is.na(list_name)) %>% group_by(list_name) %>%
+  #   mutate(choices=paste(name, collapse=";\n"),
+  #          choices.label=paste(`label::english`, collapse=";\n")) %>%
+  #   summarise(choices=choices[1], choices.label=choices.label[1])
+  # list.choices <- bind_rows(list.choices, list.choices.external)
+  # list of choices for each question
+  select.questions <- tool %>% select(type, name) %>% 
+    mutate(q.type=as.character(lapply(type, get.q.type)),
+           list_name=as.character(lapply(type, get.choice.list.name))) %>% 
+    filter(list_name!="NA" & list_name!="group" & list_name!="repeat") %>% 
+    left_join(list.choices, by="list_name") %>% 
+    filter(!is.na(choices))
+  return(select.questions)
+}
+
+get.other.db <- function(){
+  select.questions <- get.select.db()
+  # for each "other" question, get ref.question and list of choices
+  other.choice.name <- choices %>% 
+    filter(grepl("Other|other",`label::english`)|grepl("أخرى",`label::arabic`)) %>% pull(name)
+  other.db <- tool %>% filter(grepl(paste(other.choice.name,collapse="|"),relevant)) %>% 
+    select("type", "name", "label::english", "relevant") %>% 
+    mutate(ref.question=as.character(lapply(relevant, get.ref.question))) %>% 
+    left_join(select(select.questions, "name", "q.type", "list_name", "choices", "choices.label"),
+              by=c("ref.question"="name")) %>% 
+    left_join(select(var.labels, "name", "label.full"), by="name") %>% 
+    select(name, ref.question, label.full, q.type, list_name, choices, choices.label)
+  
+  return(other.db)
+}
+
+get.dependencies <- function(){
+  # determine dependencies of "other" questions 
+  # (i.e. if there is a change in any of the "other" question, we need to follow-up on other questions)
+  relevant.cleaned <- filter(tool.survey, !is.na(relevant) & !str_ends(relevant, "\\'other\\'\\)")) %>% 
+    filter(str_starts(type, "select") | str_starts(type, "text") | str_starts(type, "integer"))
+  dependencies <- other.db %>% 
+    mutate(questions.other.affected=as.numeric(lapply(name, 
+                                                      function(x){sum(str_detect(relevant.cleaned$relevant,
+                                                                                 paste("\\{",x,"\\}", sep="")))}))) %>%
+    mutate(questions.affected=as.numeric(lapply(ref.question, 
+                                                function(x){sum(str_detect(relevant.cleaned$relevant, 
+                                                                           paste("\\{",x,"\\}", sep="")))}))) %>%
+    filter(questions.other.affected > 0 | questions.affected > 0) %>% 
+    select(name, ref.question, questions.other.affected, questions.affected)
+  return(dependencies)
+}
+
+# Finish the generate.custom label function
+# Then go back to the functions that puts together all choices for the survey and make sure in the changes done in the cleaning log that they match an existing choice
+# Then continue updating the loop that incorporate cleaning log changes for new cl format with conflicting values + gps location update
+generate.custom.made.label <- function(filename="data/labels.csv"){
+  var.labels <- read.csv(filename)
+  var.labels <- var.labels %>%
+    mutate(label.full=case_when(
+      !grepl(substring(ref.variable, 1, 4), label) ~ paste(ref.variable, label, sep = " "),
+      grepl(substring(ref.variable, 1, 4), label), ~ paste(ref.variable, sub(".*? ", "", label), sep = " "),
+      TRUE ~ ""
+    ))
+  # var.labels[["label.full"]] <- ""
+  # for (r in 1:dim(var.labels)[1]){
+  #   v <- var.labels[r, "name"]
+  #   v.l <- var.labels[var.labels$name==v,"label"]
+  #   ref.v <- var.labels[r, "ref.variable"]
+  #   ref.v.l <- ifelse(ref.v %in% var.labels$name, var.labels[var.labels$name==ref.v,"label"],
+  #                     ifelse(ref.v=="", "", ref.v))
+  #   ref.v.2 <- ifelse(ref.v %in% var.labels$name, var.labels[var.labels$name==ref.v,"ref.variable"], "")
+  #   ref.v.2.l <- ifelse(ref.v.2 %in% var.labels$name, var.labels[var.labels$name==ref.v.2,"label"],
+  #                       ifelse(ref.v.2=="", "", ref.v.2))
+  #   label <- ""
+  #   
+  #   if (ref.v.2.l != "") label <- ifelse(label=="", ref.v.2.l, paste(label, ref.v.2.l, sep=" "))
+  #   if (ref.v.l != "") label <- ifelse(label=="", ref.v.l, paste(label, ref.v.l, sep=" "))
+  #   if (grepl(substring(var.labels[r, "ref.variable"],1,3), var.labels[r, "label"])) label <- paste(var.labels[r, "ref.variable"], sub(".*? ", "", var.labels[r, "label"]), sep=" ")
+  #   var.labels[r, "label.full"] <- ifelse(label=="", v.l, label)
+  # }
+  # var.labels$label.full <- sub("^ - ", "", sub("^ - ", "", sub(":*", "", var.labels$label.full))) 
+  return(var.labels)
+}
+
+get.label <- function(variable){
+  return(var.labels[var.labels$name==variable, "label.full"])
+}
+
+choice.name2label <- function(list_name, name){
+  return(as.character(choices_all[choices_all$list_name==list_name & 
+                                    choices_all$name==name, "label::english"]))
+}
+
+choice.label2name <- function(list_name, label){
+  return(as.character(choices_all[choices_all$list_name==list_name & 
+                                    choices_all$`label::english`==label, "name"]))
+}
+
+get.old.value.label <- function(cl){
+  for (r in 1:dim(cl)[1]){
+    list_name <- as.character(cl[r, "list_name"])
+    old_value <- as.character(cl[r, "old_value"])
+    if (!is.na(list.name)){
+        cl[r, "old_value"] <- choice.name2label(list_name, old_value)
+    }
+  }
+  return(cl)
+}
+
+
+add.to.cleaning.log.old <- function(checks, question.names=c(), issue="", new.value="" , fix="Checked with partner", checked_by="ON", add.col=c("")){
+  for(q.n in question.names){
+    new.entries <- checks %>% filter(flag) %>% 
+      mutate(uuid=uuid,
+             variable=q.n,
+             issue=issue,
+             old_value=!!sym(q.n),
+             new_value=new.value,
+             fix=fix,
+             checked_by=checked_by)
+    new.entries <- new.entries %>% select(all_of(col.cl), any_of(add.col))
+    cleaning.log <<- bind_rows(cleaning.log, new.entries)
+  }
+}
+
+cleaning.log.new.entries <- function(df, var, issue_type ="", new_value=" ", fix="Checked with partner", checked_by="ON") {
+  new.entries <- df %>% ungroup() %>%
+    mutate(uuid = uuid,
+           agency = q0_3_organization, 
+           area = a4_site_name3, 
+           variable = var, 
+           issue = issue_type, 
+           old_value = !!sym(var), 
+           new_value = new_value, 
+           fix = fix, 
+           checked_by = checked_by) %>% 
+    select(uuid, agency, area, variable, issue, old_value, new_value, fix, checked_by)
+}
+## Archived code
+
+save.follow.up.requests.original <- function(){
+  cols <- c("uuid", "agency", "area", 
+            "variable", "label::english", 
+            "issue", "old_value", "new_value", "explanation", "fix", "checked_by")
+  # prepare cleaning log
+  cl <- cleaning.log %>%
+    mutate(explanation="")
+  cl <- left_join(cl, select(get.select.db(), name, list_name), by=c("variable"="name"))
+  cl <- get.old.value.label(cl)
+  cl <- left_join(cl, select(choices, "name", "label::english"), by=c("variable"="name")) %>% 
+    mutate(variable.label=ifelse(is.na(`label::english`), "", `label::english`)) %>% 
+    select(all_of(cols)) %>% 
+    arrange(uuid)
+  # save follow-up requests
+  wb <- loadWorkbook(filename.follow.up.readme)
+  renameWorksheet(wb, 1, "ReadMe")
+  addWorksheet(wb, "Follow-up")
+  writeData(wb = wb, x = cl, sheet = "Follow-up", startRow = 1)
+  input.style <- createStyle(fgFill="#DDFFDD", border="TopBottomLeftRight", borderColour="#000000")
+  addStyle(wb, "Follow-up", style = input.style, rows = 2:(dim(cl)[1]+1), cols=(dim(cl)[2]-1))
+  addStyle(wb, "Follow-up", style = input.style, rows = 2:(dim(cl)[1]+1), cols=dim(cl)[2])
+  col.style <- createStyle(textDecoration="bold", fgFill="#CECECE", halign="center",
+                           border="TopBottomLeftRight", borderColour="#000000")
+  setColWidths(wb, "Follow-up", cols=3, widths=16)
+  setColWidths(wb, "Follow-up", cols=4, widths=18)
+  setColWidths(wb, "Follow-up", cols=5:9, widths=12)
+  setColWidths(wb, "Follow-up", cols=10, widths=15)
+  setColWidths(wb, "Follow-up", cols=11, widths=13)
+  setColWidths(wb, "Follow-up", cols=12, widths=11)
+  setColWidths(wb, "Follow-up", cols=13:14, widths=50)
+  setColWidths(wb, "Follow-up", cols=15, widths=25)
+  setColWidths(wb, "Follow-up", cols=16, widths=20)
+  setColWidths(wb, "Follow-up", cols=17, widths=30)
+  addStyle(wb, "Follow-up", style = createStyle(wrapText=T), rows = 1:(dim(cl)[1]+1), cols=13)
+  addStyle(wb, "Follow-up", style = createStyle(wrapText=T), rows = 1:(dim(cl)[1]+1), cols=14)
+  addStyle(wb, "Follow-up", style = createStyle(wrapText=T), rows = 1:(dim(cl)[1]+1), cols=15)
+  addStyle(wb, "Follow-up", style = col.style, rows = 1, cols=1:dim(cl)[2])
+  col.id <- which(colnames(cl)=="old_value")
+  for (r in 2:dim(cl)[1]){
+    if(as.character(cl[r, "check.id"])!="Outlier" &
+       as.character(cl[r, "check.id"])!="Other.response" &
+       as.character(cl[r, "check.id"])!="Typing" &
+       as.character(cl[r, "id"])==as.character(cl[r-1, "id"]) &
+       as.character(cl[r, "check.id"])==as.character(cl[r-1, "check.id"])){
+      random.color <- randomColor(1, luminosity = "light")
+      addStyle(wb, "Follow-up", style = createStyle(fgFill=random.color, wrapText=T), 
+               rows = r:(r+1), cols=col.id)
+    }
+  }
+  saveWorkbook(wb, filename.out.follow.up.requests, overwrite = TRUE)
+}
+
+
 partial_join_old <- function(x, y, pattern_x, by_y){
   # idy_y <- sapply(x[[pattern_x]], grep, y[[by_y]])                            # for each sitename in x, get the row indices in y with corresponding partial matches (as a list)
   # idy_y <- sapply(x, grep, y[[by_y]])
@@ -215,19 +453,6 @@ partial_join_old <- function(x, y, pattern_x, by_y){
   # add the non matching lines 
   return(df)
 }
-
-pmatch("", "")                             # returns NA
-pmatch("m",   c("mean", "median", "mode")) # returns NA
-pmatch("med", c("mean", "median", "mode")) # returns 2
-
-pmatch(c("", "ab", "ab"), c("abc", "ab"), dup = FALSE)
-pmatch(c("", "ab", "ab"), c("abc", "ab"), dup = TRUE)
-
-pmatch(c("", "ab", "ab"), c("abdd", "fab", "tafab"), dup = FALSE)
-pmatch(c("", "ab", "ab"), c("abdd", "fab", "tafab"), dup = TRUE)
-
-## compare
-charmatch(c("", "ab", "ab"), c("abc", "ab"))
 
 clean.gps.old <- function(df,x,y){
   df.temp<-df %>%
@@ -270,128 +495,83 @@ clean.gps.old <- function(df,x,y){
   return(df.temp)
 }
 
-# Additionnal helper function to streamline labels based on the tool / call on questions choicelist, etc...
+## save.workbook cleaning log archive
 
-get.ref.question <- function(x){
-  x.1 <- str_split(x, "\\{")[[1]][2]
-  return(str_split(x.1, "\\}")[[1]][1])
-}
-get.choice.list.name <- function(x){
-  x.1 <- str_split(x, " ")[[1]]
-  if (length(x.1)==1) return(NA)
-  else return(x.1[2])
-}
-get.q.type <- function(x) return(str_split(x, " ")[[1]][1])
+# 
+# save.follow.up.requests.old <- function(cl, filename.out="output/test.xlsx"){
+#   # save follow-up requests
+#   wb <- createWorkbook()
+#   addWorksheet(wb, "Follow-up")
+#   writeData(wb = wb, x = cl, sheet = "Follow-up", startRow = 1)
+#   
+#   style.col.color <- createStyle(fgFill="#E5FFCC", border="TopBottomLeftRight", borderColour="#000000")
+#   style.col.color.first <- createStyle(textDecoration="bold", fgFill="#E5FFCC",
+#                                        border="TopBottomLeftRight", borderColour="#000000", wrapText=F)
+#   
+#   addStyle(wb, "Follow-up", style = style.col.color, rows = 1:(nrow(cl)+1), cols=4)
+#   addStyle(wb, "Follow-up", style = style.col.color, rows = 1:(nrow(cl)+1), cols=5)
+#   col.style <- createStyle(textDecoration="bold", fgFill="#CECECE",halign="center",
+#                            border="TopBottomLeftRight", borderColour="#000000")
+#   setColWidths(wb, "Follow-up", cols=2, widths=15)
+#   setColWidths(wb, "Follow-up", cols=3, widths=15)
+#   setColWidths(wb, "Follow-up", cols=c(1,4,8:9), widths="auto")
+#   setColWidths(wb, "Follow-up", cols=5, widths=60)
+#   setColWidths(wb, "Follow-up", cols=6, widths=15)
+#   setColWidths(wb, "Follow-up", cols=7, widths=15)
+#   setColWidths(wb, "Follow-up", cols=10, widths=15)
+#   
+#   addStyle(wb, "Follow-up", style = createStyle(wrapText=T), rows = 1:(ncol(cl)+1), cols=6)
+#   addStyle(wb, "Follow-up", style = createStyle(wrapText=T), rows = 1:(ncol(cl)+1), cols=7)
+#   
+#   addStyle(wb, "Follow-up", style = col.style, rows = 1, cols=1:dim(cl)[2])
+#   
+#   col.id <- which(colnames(cl)=="old_value")
+#   random.color <- ""
+#   for (r in 2:nrow(cl)){
+#     if(as.character(cl[r, "uuid"])==as.character(cl[r-1, "uuid"]) & 
+#        as.character(cl[r, "check_id"])==as.character(cl[r-1, "check_id"])){
+#       if (random.color == "") random.color <- randomColor(1, luminosity = "light")
+#       addStyle(wb, "Follow-up", style = createStyle(fgFill=random.color, wrapText=T), 
+#                rows = r:(r+1), cols=col.id)
+#     } else random.color=""
+#   }
+#   addStyle(wb, "Follow-up", style = style.col.color.first, rows = 1, cols=4)
+#   addStyle(wb, "Follow-up", style = style.col.color.first, rows = 1, cols=5)
+#   saveWorkbook(wb, filename.out, overwrite = TRUE)
+# } 
 
-get.select.db <- function(){
-  # list of choices for each list_name (from TOOL_CHOICES)
-  list.choices <- choices %>% filter(!is.na(list_name)) %>% group_by(list_name) %>% 
-    mutate(choices=paste(name, collapse=";\n"),
-           choices.label=paste(`label::english`, collapse=";\n")) %>% 
-    summarise(choices=choices[1], choices.label=choices.label[1])
-  # list of choices for each question
-  select.questions <- tool %>% select(type, name) %>% 
-    mutate(q.type=as.character(lapply(type, get.q.type)),
-           list_name=as.character(lapply(type, get.choice.list.name))) %>% 
-    filter(list_name!="NA" & list_name!="group" & list_name!="repeat") %>% 
-    left_join(list.choices, by="list_name") %>% 
-    filter(!is.na(choices))
-  return(select.questions)
-}
+# var.to.be.checked <- unique(cl$variable)[unique(cl$variable) %in% colnames(data.val)]
+# rows.1 <- which(cl$variable == "c9_primary_shelter_type")
+# for (var in var.to.be.checked){
+#   dataValidation(wb, "Follow-up", cols = which(colnames(cl)=="new_value"),
+#                  rows = which(cl$variable == var), type = "list",
+#                  value = get.col.range(variable=var))    
+# }
+# dataValidation(wb, "Follow-up", cols = which(colnames(cl)=="new_value"),
+#                rows = 1:(nrow(cl)+1), type = "list",
+#                value = get.col.range(variable="c9_primary_shelter_type"))
 
-get.other.db <- function(){
-  select.questions <- get.select.db()
-  
-  # for each "other" question, get ref.question and list of choices
-  other.choice.name <- choices %>% 
-    filter(grepl("Other|other",`label::english`)|grepl("????????",`label::arabic`)) %>% pull(name)
-  other.db <- tool %>% filter(grepl(paste(other.choice.name,collapse="|"),relevant)) %>% 
-    select("type", "name", "label::english", "relevant") %>% 
-    mutate(ref.question=as.character(lapply(relevant, get.ref.question))) %>% 
-    left_join(select(select.questions, "name", "q.type", "list_name", "choices", "choices.label"),
-              by=c("ref.question"="name")) %>% 
-    left_join(select(var.labels, "name", "label.full"), by="name") %>% 
-    select(name, ref.question, label.full, q.type, list_name, choices, choices.label)
-  
-  return(other.db)
-}
 
-get.dependencies <- function(){
-  # determine dependencies of "other" questions 
-  # (i.e. if there is a change in any of the "other" question, we need to follow-up on other questions)
-  relevant.cleaned <- filter(tool.survey, !is.na(relevant) & !str_ends(relevant, "\\'other\\'\\)")) %>% 
-    filter(str_starts(type, "select") | str_starts(type, "text") | str_starts(type, "integer"))
-  dependencies <- other.db %>% 
-    mutate(questions.other.affected=as.numeric(lapply(name, 
-                                                      function(x){sum(str_detect(relevant.cleaned$relevant,
-                                                                                 paste("\\{",x,"\\}", sep="")))}))) %>%
-    mutate(questions.affected=as.numeric(lapply(ref.question, 
-                                                function(x){sum(str_detect(relevant.cleaned$relevant, 
-                                                                           paste("\\{",x,"\\}", sep="")))}))) %>%
-    filter(questions.other.affected > 0 | questions.affected > 0) %>% 
-    select(name, ref.question, questions.other.affected, questions.affected)
-  return(dependencies)
-}
 
-# Finish the generate.custom label function
-# Then go back to the functions that puts together all choices for the survey and make sure in the changes done in the cleaning log that they match an existing choice
-# Then continue updating the loop that incorporate cleaning log changes for new cl format with conflicting values + gps location update
-generate.custom.made.label <- function(filename="data/labels.csv"){
-  var.labels <- read.csv(filename)
-  var.labels <- var.labels %>%
-    mutate(label.full=case_when(
-      !grepl(substring(ref.variable, 1, 4), label) ~ paste(ref.variable, label, sep = " "),
-      grepl(substring(ref.variable, 1, 4), label), ~ paste(ref.variable, sub(".*? ", "", label), sep = " "),
-      TRUE ~ ""
-    ))
-  
-  # var.labels[["label.full"]] <- ""
-  # for (r in 1:dim(var.labels)[1]){
-  #   v <- var.labels[r, "name"]
-  #   v.l <- var.labels[var.labels$name==v,"label"]
-  #   ref.v <- var.labels[r, "ref.variable"]
-  #   ref.v.l <- ifelse(ref.v %in% var.labels$name, var.labels[var.labels$name==ref.v,"label"],
-  #                     ifelse(ref.v=="", "", ref.v))
-  #   ref.v.2 <- ifelse(ref.v %in% var.labels$name, var.labels[var.labels$name==ref.v,"ref.variable"], "")
-  #   ref.v.2.l <- ifelse(ref.v.2 %in% var.labels$name, var.labels[var.labels$name==ref.v.2,"label"],
-  #                       ifelse(ref.v.2=="", "", ref.v.2))
-  #   label <- ""
-  #   
-  #   if (ref.v.2.l != "") label <- ifelse(label=="", ref.v.2.l, paste(label, ref.v.2.l, sep=" "))
-  #   if (ref.v.l != "") label <- ifelse(label=="", ref.v.l, paste(label, ref.v.l, sep=" "))
-  #   if (grepl(substring(var.labels[r, "ref.variable"],1,3), var.labels[r, "label"])) label <- paste(var.labels[r, "ref.variable"], sub(".*? ", "", var.labels[r, "label"]), sep=" ")
-  #   var.labels[r, "label.full"] <- ifelse(label=="", v.l, label)
-  # }
-  # var.labels$label.full <- sub("^ - ", "", sub("^ - ", "", sub(":*", "", var.labels$label.full))) 
-  return(var.labels)
-}
+# add.to.cleaning.log.old <- function(checks, question.names=c(), issue="", new.value="" , fix="Checked with partner", checked_by="ON", add.col=c("")){
+#   df <- initialise.cleaning.log()
+#   if (nrow(checks)>0){
+#     for(q.n in question.names){
+#       new.entries <- checks %>% filter(flag) %>% 
+#         mutate(uuid=uuid,
+#                variable=q.n,
+#                issue=issue,
+#                old_value=!!sym(q.n),
+#                new_value=new.value,
+#                fix=fix,
+#                checked_by=checked_by)
+#       new.entries <- new.entries %>% select(all_of(col.cl), any_of(add.col))
+#       df <- bind_rows(df, new.entries)
+#     }
+#     cleaning.log <<- bind_rows(cleaning.log, df %>% arrange(uuid, variable, agency))
+#   }
+# }
 
-get.label <- function(variable){
-  return(var.labels[var.labels$name==variable, "label.full"])
-}
-
-choice.name2label <- function(list_name, name){
-  return(as.character(tool.choices[tool.choices$list_name==list_name & 
-                                     tool.choices$name==name, "label::English"]))
-}
-
-choice.label2name <- function(list_name, label){
-  return(as.character(tool.choices[tool.choices$list_name==list_name & 
-                                     tool.choices$`label::English`==label, "name"]))
-}
-
-get.old.value.label <- function(cl){
-  for (r in 1:dim(cl)[1]){
-    list.name <- as.character(cl[r, "list_name"])
-    old.value <- as.character(cl[r, "old.value"])
-    if (!is.na(list.name)){
-      cl[r, "old.value"] <- choice.name2label(list.name, old.value)
-    }
-  }
-  return(cl)
-}
-
-## Archived code
 
 ## adequacy log [multiple columns format]
 # priority.need.checks.old <- function(df, check=""){
