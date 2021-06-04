@@ -471,10 +471,10 @@ save.follow.up.requests(cleaning.log, filename.out=paste0("output/cleaning log/c
 # browseURL(paste0("output/cleaning log/cleaning_log_all_", today,".xlsx"))
 
 ### Split all cleaning log by partner
+dir.create("output/cleaning log/partners", showWarnings = F, recursive = T)
 for (org in unique(cleaning.log$agency)) {
-  cl.org <- cleaning.log %>%
-    filter(agency == org) %>%
-    save.follow.up.requests(., filename.out=paste0("output/cleaning log/cleaning_log_", org, "_", today, ".xlsx"))
+  cl.org <- cleaning.log %>% filter(agency == org) %>%
+    save.follow.up.requests(., filename.out=paste0("output/cleaning log/partners/cleaning_log_", org, "_", today, ".xlsx"))
 }
 
 # how to do it in a more beautiful way? ask Dami...
@@ -491,21 +491,22 @@ for (org in unique(cleaning.log$agency)) {
 ## Annex: For Adding a new logical check:
 ################################################################################
 
-check_name <- response %>%                                                      # Whatever name you want to give to your logical check
-  mutate(flag = ifelse((variable.1 == "yes" & variable.2 == 1), T, F),          # Create column flag (TRUE/FALSE) that flag surveys matching the logical condition(s)
-         issue = ifelse(flag, "issue message", NA)) %>%                         # Issue message as it will be displayed in the cleaning log [can also be manually edited in the parameter's function issue = ""]
-  dplyr::rename(agency=q0_3_organization, area=a4_site_name)                    # To streamline headers with standard cleaning log's columns headers
-
-if (nrow(check_name %>% filter(flag))==0){print("Message if no error. The dataset seems clean.")} else {
-  print("Message highlighting that there is at least one error. To be checked.")}
-
-# Add to the cleaning log
-# You can have as many conflicting/interlinked variable as you'd like, just write all headers in the question.names parameter as vector.
-add.to.cleaning.log(check_name,  check_id = "check.id.number",
-                    question.names = c("c3_tenancy_agreement_for_at_least_6_months", "f1_threats_to_the_site.eviction"),
-                    issue = "issue",                                            # if "issue", it will look for a column named "issue" in check_name. You can manually edit the issue also by writing direct text between ""
-                    add.col = c(""))                                            # If for some reason, the logical check require a specific additionnal column to be more self explanatory. Avoid in general
- 
+# check_name <- response %>%                                                      # Whatever name you want to give to your logical check
+#   mutate(flag = ifelse((variable.1 == "yes" & variable.2 == 1), T, F),          # Create column flag (TRUE/FALSE) that flag surveys matching the logical condition(s)
+#          issue = ifelse(flag, "issue message", NA)) %>%                         # Issue message as it will be displayed in the cleaning log [can also be manually edited in the parameter's function issue = ""]
+#   dplyr::rename(agency=q0_3_organization, area=a4_site_name)                    # To streamline headers with standard cleaning log's columns headers
+# 
+# if (nrow(check_name %>% filter(flag))==0){print("Message if no error. The dataset seems clean.")} else {
+#   print("Message highlighting that there is at least one error. To be checked.")}
+# 
+# # Add to the cleaning log
+# # You can have as many conflicting/interlinked variable as you'd like, just write all headers in the question.names parameter as vector.
+# add.to.cleaning.log(check_name,  
+#                     check_id = "XX",                                            # For coloring cells in cleaning log when multiple rows are linked with same issue. Write the number/code for the additionnal check_id => need to be non empty and not the same than previous one. pick the next number ideally.
+#                     question.names = c("var1", "var2", "var3"),                 # Exact column headers corresponding to all variables that potentially needs updating - at least one column must be specified 
+#                     issue = "issue",                                            # if "issue", it will look for a column named "issue" in check_name. You can manually edit the issue also by writing direct text between ""
+#                     add.col = c(""))                                            # If for some reason, the logical check require a specific additionnal column to be more self explanatory. Avoid in general, it will make the cleaning log messy
+#  
 ################################################################################
 # Archived code: 
 ################################################################################
@@ -520,7 +521,6 @@ add.to.cleaning.log(check_name,  check_id = "check.id.number",
 # response <- response %>% mutate(a4_site_name3 = ifelse(!is.na(a4_site_name2), as.character(a4_site_name2), a4_other_site))
 
 ## OLD GPS CHECK 
-
 # ### GPS coordinates - Mapping and check
 # # load layers from gdb
 # adm1 <- st_read(dsn = "data/shapes/yem_adm_govyem_cso_ochayemen_20191002_GDB.gdb", layer="yem_admbnda_adm1_govyem_cso")
@@ -622,4 +622,3 @@ add.to.cleaning.log(check_name,  check_id = "check.id.number",
 #   mutate(fix="Checked with partner", checked_by = "ON", variable = paste0("a5_1_gps_longitude, a5_2_gps_latitude"))
 
 # if (nrow(gps_issue_log) == 0) print("No issues with GPS coodinates have been detected. The dataset seems clean.")
-

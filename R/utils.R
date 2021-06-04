@@ -59,8 +59,8 @@ clean.gps <- function(df,x,y){
       (!!sym(x) %>% as.numeric < 20) & (!near(!!sym(x) %>% as.numeric, !!sym(y) %>% as.numeric , tol = 0.2)) ~ "Latitude entered instead of Longitude",
       !!sym(x) %>% as.numeric > 80 ~ "Longitude not in Decimal Degree format",
       grepl("E", !!sym(x)) ~ "Longitude invalid format: mix beteen DD and DMS",
-      grepl("?", !!sym(x)) & !is.na(gsub("?", "", !!sym(x)) %>% as.numeric)  ~ "Longitude invalid format: mix beteen DD and DMS",
-      grepl("?|'", !!sym(x)) ~ "Longitude not in DD but in DMS",
+      grepl("°", !!sym(x)) & !is.na(gsub("°", "", !!sym(x)) %>% as.numeric)  ~ "Longitude invalid format: mix beteen DD and DMS",
+      grepl("°|'", !!sym(x)) ~ "Longitude not in DD but in DMS",
       grepl(",|-|\\/|\\\\", !!sym(x)) ~ "Longitude include invalid characters",
       TRUE ~ ""),
       Longitude_clean = case_when(
@@ -78,8 +78,8 @@ clean.gps <- function(df,x,y){
         !!sym(y) %>% as.numeric > 80 ~ "Latitude not in Decimal Degree format",
         (!!sym(y) %>% as.numeric > 20) & (!near(!!sym(x) %>% as.numeric, !!sym(y) %>% as.numeric , tol = 0.2)) ~ "Longitude entered instead of Latitude",
         grepl("N", !!sym(y)) ~ "Latitude invalid format: mix beteen DD and DMS",
-        grepl("?", !!sym(y)) & !is.na(gsub("?", "", !!sym(x)) %>% as.numeric)  ~ "Latitude invalid format: mix beteen DD and DMS",
-        grepl("?|'", !!sym(y)) ~ "Latitude not in DD but in DMS",
+        grepl("°", !!sym(y)) & !is.na(gsub("°", "", !!sym(x)) %>% as.numeric)  ~ "Latitude invalid format: mix beteen DD and DMS",
+        grepl("°|'", !!sym(y)) ~ "Latitude not in DD but in DMS",
         grepl(",|-|\\/|\\\\| ", !!sym(y)) ~ "Latitude include invalid characters",
         TRUE ~ ""),
       Latitude_clean = case_when(
@@ -463,8 +463,8 @@ clean.gps.old <- function(df,x,y){
       (!!sym(x) %>% as.numeric < 20) & (!near(!!sym(x) %>% as.numeric, !!sym(y) %>% as.numeric , tol = 0.2)) ~ "Latitude entered instead of Longitude",
       !!sym(x) %>% as.numeric > 80 ~ "Longitude not in Decimal Degree format",
       grepl("E", !!sym(x)) ~ "Longitude invalid format: mix beteen DD and DMS",
-      grepl("?", !!sym(x)) & !is.na(gsub("?", "", !!sym(x)) %>% as.numeric)  ~ "Longitude invalid format: mix beteen DD and DMS",
-      grepl("?|'", !!sym(x)) ~ "Longitude not in DD but in DMS",
+      grepl("°", !!sym(x)) & !is.na(gsub("°", "", !!sym(x)) %>% as.numeric)  ~ "Longitude invalid format: mix beteen DD and DMS",
+      grepl("°|'", !!sym(x)) ~ "Longitude not in DD but in DMS",
       TRUE ~ ""),
       Longitude_clean = case_when(
         issue_lon == "Invalid Longitude coordinate (0)" ~ NA_real_,
@@ -480,8 +480,8 @@ clean.gps.old <- function(df,x,y){
         !!sym(y) %>% as.numeric > 80 ~ "Latitude not in Decimal Degree format",
         (!!sym(y) %>% as.numeric > 20) & (!near(!!sym(x) %>% as.numeric, !!sym(y) %>% as.numeric , tol = 0.2)) ~ "Longitude entered instead of Latitude",
         grepl("N", !!sym(y)) ~ "Latitude invalid format: mix beteen DD and DMS",
-        grepl("?", !!sym(y)) & !is.na(gsub("?", "", !!sym(x)) %>% as.numeric)  ~ "Latitude invalid format: mix beteen DD and DMS",
-        grepl("?|'", !!sym(y)) ~ "Latitude not in DD but in DMS",
+        grepl("°", !!sym(y)) & !is.na(gsub("°", "", !!sym(x)) %>% as.numeric)  ~ "Latitude invalid format: mix beteen DD and DMS",
+        grepl("°|'", !!sym(y)) ~ "Latitude not in DD but in DMS",
         TRUE ~ ""),
       Latitude_clean = case_when(
         issue_lat == "Invalid Latitude coordinate (0)" ~ NA_real_,

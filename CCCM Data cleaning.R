@@ -1,7 +1,7 @@
 # CCCM Site Monitoring Tool - Data Cleaning script
-# REACH Yemen - alberto.gualtieri@reach-initiative.org
-# V4
-# 31/10/2019
+# REACH Yemen - raphael.bacot@reach-initiative.org
+# V5
+# 04/06/2021
 
 rm(list=ls())
 setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
@@ -16,24 +16,52 @@ p_load_gh("mabafaba/cleaninginspectoR","agualtieri/cleaninginspectoR","agualtier
 source("./R/cleanHead.R")
 source("./R/add_locations.R")
 source("./R/moveme.R")
+## Paramaters to be updated each month
 
-## Upload choices from Kobo tool
-tool <- read.xlsx("data/CCCM_Site_Reporting_Kobo_tool_(V1)_12042021.xlsx", sheet = "survey")
-choices <- read.xlsx("data/CCCM_Site_Reporting_Kobo_tool_(V1)_12042021.xlsx", sheet = "choices")
-external_choices <- read.xlsx("data/CCCM_Site_Reporting_Kobo_tool_(V1)_12042021.xlsx", sheet = "external_choices") %>%
+## Uncomment the relevant tool version and comment the other one
+tool.version <- "V1"                                                            # V1 or V2 update according to the kobo tool used
+# tool.version <- "V2"
+
+## Update the directory for all files each month with the latest version. Beware of getting V1 and V2 right!
+rawdata.filename.v1 <- "data/Copy of CCCM_Site_Reporting_Form_V1_Week 8_raw org data.xlsx"    # Update the name of the rawdata filename
+rawdata.filename.v2 <- "data/Copy of CCCM_Site_Reporting_V2__Week 8_raw org data.xlsx"
+tool.filename.v1 <- "data/CCCM_Site_Reporting_Kobo_tool_(V1)_12042021.xlsx"
+tool.filename.v2 <- "data/CCCM_Site_Reporting_Kobo_tool_(V2)_12042021.xlsx"
+sitemasterlist.filename <- "CCCM-site-masterlist-cleaning/data/CCCM_IDP Hosting Site List_March 2021.xlsx" # To be updated depending on where you put it
+
+## Tool columns comparison
+# responsev1 <- read.xlsx(rawdata.filename.v1)
+# responsev2 <- read.xlsx(rawdata.filename.v2)
+# colv1 <- colnames(responsev1)
+# colv2 <- colnames(responsev2)
+# col.all <- unique(colv1, colv2)
+
+## Load survey questions from kobo tool
+tool <- if (tool.version == "V1") {read.xlsx(tool.filename.v1, sheet = "survey")} else if(tool.version == "V2") {read.xlsx(tool.filename.v2, sheet = "survey")} else {print("invalid tool entered, should be either V1 or V2")}
+## Load survey choices Using kobo to rename the site name and than merge the other column
+choices <- if (tool.version == "V1") {read.xlsx(tool.filename.v1, sheet = "choices")} else if(tool.version == "V2") {read.xlsx(tool.filename.v2, sheet = "choices")} else {print("invalid tool entered, should be either V1 or V2")}
+external_choices <- if (tool.version == "V1") {read.xlsx(tool.filename.v1, sheet = "external_choices")} else if (tool.version == "V2") {read.xlsx(tool.filename.v2, sheet = "external_choices")} else {print("invalid tool entered, should be either V1 or V2")}
+external_choices_site <- external_choices %>%
   filter(list_name == "sitename") %>% dplyr::rename(a4_site_name = name)
+choices_all <- bind_rows(choices, external_choices) %>%                         # For cleaning log functions
+  rbind(c("sitename", "other", "Other", "أخرى", NA, NA))
 
-## Upload data to be cleaned and fix some header names
-response <- read.xlsx("./data/CCCM_Site_Reporting_Form_V1_example raw data.xlsx")
+## Load site_name masterlist to match admin names with site_name
+setwd("..")                                                                     # To be updated depending on where you put it
+masterlist <- read.xlsx(sitemasterlist.filename) %>%                            
+  setNames(gsub("\\.", "_", colnames(.)))
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
 
-response <- read.xlsx("data/Copy of CCCM_Site_Reporting_Form_V1_Week 8_raw org data.xlsx")%>%
-  mutate(a4_site_name = a4_other_site,
-         id = 1:n(), .before = "deviceid") %>%
+## Load data to be cleaned
+response <- if (tool.version == "V1") {read.xlsx(rawdata.filename.v1)} else if (tool.version == "V2") {read.xlsx(rawdata.filename.v2)} else {print("invalid tool entered, should be either V1 or V2")}
+response <- response %>% mutate(a4_site_name = a4_other_site, id = 1:n(), .before = "deviceid") %>%
   dplyr::rename(index = '_index', uuid = '_uuid')
 
 ## Upload updated cleaning log file
-cleaning_log <- read.xlsx("./output/CCCM_SiteID_cleaning log_2021-05-31.xlsx") %>%
-  mutate(change=T)
+files.cleaning.log <- list.files("output/cleaning log/partners updated")
+
+# cleaning_log <- read.xlsx("./output/cleaning log/cleaning_log_all_2021-06-04.xlsx") 
+
 # "./output/CCCM_SiteID_cleaning log_2021-05-19.xlsx"
 # cleaning_log <- read.xlsx("./output/CCCM_SiteID_cleaning log_2021-05-06.xlsx")
 
