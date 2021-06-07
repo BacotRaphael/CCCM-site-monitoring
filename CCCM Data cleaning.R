@@ -16,6 +16,7 @@ p_load_gh("mabafaba/cleaninginspectoR","agualtieri/cleaninginspectoR","agualtier
 source("./R/cleanHead.R")
 source("./R/add_locations.R")
 source("./R/moveme.R")
+source("./R/utils.R")
 ## Paramaters to be updated each month
 
 ## Uncomment the relevant tool version and comment the other one
@@ -28,6 +29,7 @@ rawdata.filename.v2 <- "data/Copy of CCCM_Site_Reporting_V2__Week 8_raw org data
 tool.filename.v1 <- "data/CCCM_Site_Reporting_Kobo_tool_(V1)_12042021.xlsx"
 tool.filename.v2 <- "data/CCCM_Site_Reporting_Kobo_tool_(V2)_12042021.xlsx"
 sitemasterlist.filename <- "CCCM-site-masterlist-cleaning/data/CCCM_IDP Hosting Site List_March 2021.xlsx" # To be updated depending on where you put it
+filename.pcodes <- "R/pcodes/yem_admin_ochayemen_20191002.xlsx"
 
 ## Tool columns comparison
 # responsev1 <- read.xlsx(rawdata.filename.v1)
@@ -45,11 +47,13 @@ external_choices_site <- external_choices %>%
   filter(list_name == "sitename") %>% dplyr::rename(a4_site_name = name)
 choices_all <- bind_rows(choices, external_choices) %>%                         # For cleaning log functions
   rbind(c("sitename", "other", "Other", "أخرى", NA, NA))
+survey_choices <- get.select.db()
 
 ## Load site_name masterlist to match admin names with site_name
 setwd("..")                                                                     # To be updated depending on where you put it
 masterlist <- read.xlsx(sitemasterlist.filename) %>%                            
-  setNames(gsub("\\.", "_", colnames(.)))
+  setNames(gsub("\\.", "_", colnames(.))) %>%
+  mutate_at(vars(matches("Newly_|_Households|Population|#_of_total_Households")), ~as.numeric(arabic.tonumber(gsub(",", "", .))))
 setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
 
 ## Load data to be cleaned
@@ -58,68 +62,92 @@ response <- response %>% mutate(a4_site_name = a4_other_site, id = 1:n(), .befor
   dplyr::rename(index = '_index', uuid = '_uuid')
 
 ## Upload updated cleaning log file
-files.cleaning.log <- list.files("output/cleaning log/partners updated")
+files.cleaning.log <- paste0("output/cleaning log/partners updated/", list.files("output/cleaning log/partners updated"))
+cleaning.log <- data.frame()
+for (file in files.cleaning.log){
+  cleaning.log <- bind_rows(cleaning.log, read.xlsx(file) %>% mutate_all(as.character))
+}
+if ((cleaning.log %>% group_by(uuid, variable) %>% filter(n()>1) %>% nrow) > 0) {print("There are duplicates entries (or multiple entries for the same variable) in the cleaning log. Make sure it's ok and that there are no conflicting new_values assigned.")}
+duplicate.cl <- cleaning.log %>% group_by(uuid, variable) %>% filter(n()>1) %>% ungroup
 
-# cleaning_log <- read.xlsx("./output/cleaning log/cleaning_log_all_2021-06-04.xlsx") 
+### Sitenames
+## Check that sitename/code entered are not duplicated & within list
+data.validation.list()                                                          # Extract all choices from Kobo tool in neat format (with headers name)
+duplicate.site.cl <- cleaning.log %>%                                           # Display duplicate site ids
+  filter(variable == "a4_site_name", !is.na(new_value)) %>%
+  group_by(new_value) %>% filter(n()>1) %>% arrange(new_value)
 
-# "./output/CCCM_SiteID_cleaning log_2021-05-19.xlsx"
-# cleaning_log <- read.xlsx("./output/CCCM_SiteID_cleaning log_2021-05-06.xlsx")
+site.cl.not.in.list <- cleaning.log %>%                                         # Display site id entered that are not in kobo list
+  filter(variable == "a4_site_name",
+         !is.na(new_value),
+         !(new_value %in% data.val$a4_site_name[!is.na(data.val$a4_site_name)]))
 
-# ## Apply cleaning log [edited loop to change latitude & longitude + new format for conflicting variable in priority needs checks]
-# 
-# 
-# for (n in seq_along(1:nrow(cleaning_log))){
-#   col <- cleaning_log %>% slice(n) %>% pull(variable)                                         # Get the name of the variable to be updated in response dataset
-#   new_value <- cleaning_log %>% slice(n) %>% pull(new_value)                                  # Get the new value for this cleaning log entry
-#   if (new_value %in% c("confirmed", "Confirmed")) {new_value <- cleaning_log[n, "old_value"]} # Tell to keep old value if new value is "confirmed"
-#   
-#   response[n, col] <- cleaning_log %>% slice(n) %>% pull(new_value)                           # Update the value in response dataset
-#   if (!is.na(cleaning_log[n, "conflicting_variable"])) {                                      # In case there is a conflicting variable, update this variable too
-#     col2 <- cleaning_log %>% slice(n) %>% pull(conflicting_variable)                          # Get the name of the conflicting variable to be updated
-#   }
-# }
+## Filter sites not in kobo list or that are NA to generate a new site code
+new.sites <- cleaning.log %>%                                         # Display site id entered that are not in kobo list
+  filter(variable == "a4_site_name",
+         is.na(new_value),
+         !(new_value %in% data.val$a4_site_name[!is.na(data.val$a4_site_name)])) %>%
+  mutate(new_site = TRUE, new_site_id = NA, new_site_name_en = NA, new_site_name_ar = NA, .after = "new_value") %>%
+  left_join(response %>% select(uuid, a2_district, a3_sub_district), by = "uuid") %>%
+  relocate(a2_district, a3_sub_district, .after = "new_site_name_ar")
 
-## Apply cleaning log
-my_log <- cleaninglog(ids = cleaning_log$uuid,
-                      variables = cleaning_log$variable,
-                      new_values = cleaning_log$new_value,
-                      name = cleaning_log$fix,
-                      change = cleaning_log$change,
-                      data_id_column_name = "uuid")
+## Flag sites that are existing and that don't need a new name (changing column new_site to FALSE)
+existing.sites.uuid <- c("90c2ab8e-b3c5-49f3-86be-55a8aa89c144", "f4f5bee4-afcb-44f6-89f3-d22b6ff17962", "42f0eea0-8d4e-4200-9383-7cc976d0a8e6")
+new.sites <- new.sites %>%
+  mutate(new_site = ifelse(uuid %in% existing.sites.uuid,                       # put new_site = FALSE for the uuid selected above
+                           FALSE, new_site))
 
-clean_data <- clog_clean(response, my_log)
+## Creating new sitename code
+max.id.split <- masterlist$Site_ID %>% sub(".*?_", "",.) %>%                    # Extract the highest number in site id in masterlist 
+  as.numeric %>% max(na.rm = T)
+latest_id <- masterlist$Site_ID[grepl(paste0("_", max.id.split), masterlist$Site_ID)]      # Extract the latest full ID
+seq <- (max.id.split+1):(max.id.split+500)                                      # Create list of numbers starting from the latest one
 
-# ## In case a new ID has to be assigned 
-# paste DistrictPcode and increasing number
-# YE1505_1566 => get the latest created id code and increase by one the number after 
-# => move that part in the data cleaning script
+new.sites <- new.sites %>%
+  filter(new_site == TRUE) %>%
+  mutate(new_site_id = paste0(a2_district, "_", seq[1:nrow(.)]),                # create new site ID in column new_site_id of the cleaning log                
+         new_value = new_site_id)
+new.sites.uuid <- new.sites$uuid
 
-# max.id.split.df <- response$a4_site_name %>% sub(".*?_", "",.) %>% as.numeric %>% max(na.rm = T)
-# max.id.split <- max(max.id.split.master, max.id.split.df)
+## Assign the new official name in English + Arabic
+new.sites %>% write.xlsx(paste0("output/new_sites_",today, ".xlsx"))
+# browseURL(paste0("output/new_sites_",today, ".xlsx"))                         # Enter the name of site in English and Arabic, and save the file with "_updated" at the end of the name
+# Read the updated sitename file
+new.sites.updated <- read.xlsx(paste0("output/new_sites_",today, "_updated.xlsx")) 
+if (new.sites.updated %>% filter(is.na(new_site_name_en) | is.na(new_site_name_ar)) %>% nrow > 0){print("You didn't assign name in english and or Arabic for all new sites. Please redo the previous step.")}
+if (nrow(new.sites.updated)>0){print(paste0("There are ", nrow(new.sites.updated), " new sites that will be added to the site masterlist."))}
 
-# When new site, new name in english is given at the cleaning log stage
-# Could be a name change to be recorded in the masterlist
-# sequence + new name
+## Add to cleaning log to keep track of changes done to site name in english + arabic in the dataset
+cleaning.log <- cleaning.log %>%                                                # Update in the cleaning log
+  filter(!(uuid %in% new.sites.uuid & variable == "a4_site_name")) %>%          # filter out old entries in cleaning log for the new sites
+  bind_rows(new.sites)                                                          # Append new value for the site ID for new sites in cleaning log
 
-max.id.split <- masterlist$Site_ID %>% sub(".*?_", "",.) %>% as.numeric %>% max(na.rm = T)
-latest_id <- masterlist$Site_ID[grepl(paste0("_", max.id.split), masterlist$Site_ID)]
-seq <- (max.id.split+1):(max.id.split+100)
+### Apply cleaning log changes to response file
+clean_data <- response
+for (n in seq_along(1:nrow(cleaning.log))){
+  col <- cleaning.log %>% slice(n) %>% pull(variable)                                                 # Get the name of the variable to be updated in response dataset
+  new_value <- cleaning.log %>% slice(n) %>% pull(new_value)                                          # Get the new value for this cleaning log entry
+  if (new_value %in% c("confirmed", "Confirmed")) {new_value <- cleaning.log[n, "old_value"]} else {  # Tell to keep old value if new value is "confirmed"
+    new_value <- cleaning.log[n, "new_value"]}
+  if (col %in% colnames(clean_data)) {
+    clean_data[clean_data$uuid==cleaning.log[n,"uuid"], col] <- new_value                                 # Assign new value to the variable in the dataframe response
+  }
+}
 
-new_sites <- clean_data %>%
-  filter(new_site == 1) %>%
-  mutate(new_site_ID = paste0(a2_district, "_", seq[1:nrow(.)]))                # will create new side IDs
+## Update the masterlist with new sites entries + ID and available informations
+new.sites.master <- new.sites.updated %>% 
+  left_join(response %>% select(uuid, a5_2_gps_latitude, a5_1_gps_longitude, a7_site_population_hh, a7_site_population_individual), by="uuid") %>%
+  mutate(Partner_Name = agency, Sub_Dist_ID=a3_sub_district, Site_ID = new_site_id, Site_Name=new_site_name_en, 
+         Site_Name_In_Arabic=new_site_name_ar, Latitude=a5_2_gps_latitude, Longitude=a5_1_gps_longitude, "#_of_total_Households"=as.numeric(a7_site_population_hh),
+         Total_Site_Population=as.numeric(a7_site_population_individual)) %>% select(intersect(colnames(.), colnames(masterlist))) 
 
-# response <- response %>% mutate(new_site_id = ifelse(a4_site_name == "other", ))
-# response <- response %>% mutate(new_site_id = ifelse(a4_site_name != "other", a4_site_name, paste0(a2_district,"_",numeric_seq$numeric_seq)))
+masterlist_updated <- masterlist %>% bind_rows(new.sites.master)                # Adding the new sites in the existing site masterlist
+# dir.create("output/masterlist", showWarnings = F)
+masterlist_updated %>% write.xlsx(paste0("output/masterlist/masterlist_", today,".xlsx"))
 
-#numeric_seq <- seq(from = 1185, to = 5000)
-#numeric_seq <- data.frame(numeric_seq)
-
-### Using kobo to rename the site name and than merge the other column
-
-clean_data$a4_site_name2 <- external_choices$`label::english`[match(clean_data$a4_site_name, external_choices$`label::arabic`)]
-clean_data <- clean_data %>% mutate(a4_site_name3 = ifelse(!is.na(a4_site_name2), as.character(a4_site_name2), a4_other_site))
-
+# ### Using kobo to rename the site name and than merge the other column
+# clean_data$a4_site_name2 <- external_choices$`label::english`[match(clean_data$a4_site_name, external_choices$`label::arabic`)]
+# clean_data <- clean_data %>% mutate(a4_site_name3 = ifelse(!is.na(a4_site_name2), as.character(a4_site_name2), a4_other_site))
 # external_choices <- filter(external_choices, external_choices$list_name == "sitename")
 # names(external_choices)[names(external_choices) == "name"] <- "a4_site_name"
 # 
@@ -128,48 +156,25 @@ clean_data <- clean_data %>% mutate(a4_site_name3 = ifelse(!is.na(a4_site_name2)
 # clean_data <- clean_data %>% mutate(a4_site_name3 = ifelse(!is.na(a4_site_name2), as.character(a4_site_name2), a4_other_site))
 
 ### Rename all variables for the dashboard and save file
-# clean_data <- add.location(clean_data) => issue if response doesn't have any district column // not convinced by separate join method in the function as if there is mismatch, it will yield inconsistent admin levels
-# clean_data <- clean_data %>% left_join(admin3, by="a3_sub_district") => not possible if not available in survey, needs to use GPS coordinates
-
-filename.pcodes <- "R/pcodes/yem_admin_ochayemen_20191002.xlsx"
+# clean_data <- add.location(clean_data) 
 admin3 <- read.xlsx(filename.pcodes, sheet = "admin3") %>%
   dplyr::rename(a3_sub_district_name=admin3RefName_en, a3_sub_district=admin3Pcode,
                 a2_district_name=admin2Name_en, a2_district=admin2Pcode,
                 a1_governorate_name=admin1Name_en, a1_governorate=admin1Pcode)
 
-# localise cleaned gps locations and import admin names accordingly
-source("R/utils.R")
-
-# Sanitizing GPS locations
-clean_data <- clean.gps(clean_data, "a5_1_gps_longitude", "a5_2_gps_latitude") 
-
-# importing boundaries
-# adm2 <- st_read(dsn = "R/shapes/yem_adm_govyem_cso_ochayemen_20191002_GDB.gdb", layer="yem_admbnda_adm2_govyem_cso")
-# adm3_loc <- st_read(dsn = "R/shapes/yem_adm_govyem_cso_ochayemen_20191002_GDB.gdb", layer="yem_admbndp_adm3_govyem_cso")
-adm3 <- st_read(dsn = "R/shapes/yem_adm_govyem_cso_ochayemen_20191002_GDB.gdb", layer="yem_admbnda_adm3_govyem_cso") %>%
-  dplyr::rename(a3_sub_district_name=admin3RefName_en, a3_sub_district=admin3Pcode, a2_district_name=admin2Name_en, 
-                a2_district=admin2Pcode, a1_governorate_name=admin1Name_en, a1_governorate=admin1Pcode)
-
-#joining gps coordinates with admin3 names
-clean_data_mapped <- clean_data %>% mutate(SHAPE = mapply(c, as.numeric(Longitude_clean), as.numeric(Latitude_clean), SIMPLIFY = F) %>% map(st_point)) %>%
-  st_sf(crs = 4326, sf_column_name = "SHAPE") %>% select(-a1_governorate) %>%
-  st_join(adm3) %>% st_drop_geometry %>% mutate(country_name = "Yemen", country_id = "YE")
-clean_data_mapped <- clean_data_mapped %>% 
-  select(country_name, a1_governorate, country_name, country_id, a1_governorate_name, a1_governorate,
-         a2_district_name, a2_district, a3_sub_district_name, a3_sub_district, a3_sub_district,a4_site_name3, everything())
+clean_data_loc <- clean_data %>% 
+  select(-any_of(c("a1_governorate", "a2_district"))) %>%
+  left_join(admin3, by="a3_sub_district") %>%
+  select(uuid, start, end, today, matches("a1_|a2_"), matches("a3_"), everything())
 
 # Delete unneccessary site columns
-clean_data <- clean_data_mapped %>% select(-c("a4_site_name2", "a4_site_name", "deviceid", "subscriberid", "imei","calca11", contains("phone")))
-pii <- clean_data_mapped %>% select(uuid, c("a4_site_name2", "a4_site_name", "deviceid", "subscriberid", "imei","calca11", contains("phone")))
-
-# clean_data <- anonymise_dataset(clean_data, c("comments_001", "a4_site_name2", "a4_site_name", "deviceid", "subscriberid", "imei", "phonenumber", "_validation_status",
-#                                               "d2_2_second_most_common_district_of_idp_origin_001", "d2_2_most_common_governorate_of_idp_origin", "d2_governorate_of_idp_origin",
-#                                               "comments", "__version__", "calca11", "country_name", "country_id"))
+clean_data <- clean_data_loc %>% select(-c("deviceid", "subscriberid", "imei","calca11", contains("phone")))
+pii <- clean_data_loc %>% select(uuid, c("deviceid", "subscriberid", "imei","calca11", contains("phone")))
 
 # Rename site columns to match the DB file
 clean_data <- clean_data %>%
-  setnames(old = c("a4_site_name3", "new_site_id", "a1_governorate", "a2_district", "a3_sub_district"), 
-           new = c("a4_site_name", "a4_site_code", "a1_governorate_code", "a2_district_code", "a3_sub_district_code"),
+  setnames(old = c("a4_site_name", "a1_governorate", "a2_district", "a3_sub_district"), 
+           new = c("a4_site_code", "a1_governorate_code", "a2_district_code", "a3_sub_district_code"),
            skip_absent = T)
 
 # # Rename site columns to match the DB file
@@ -179,52 +184,41 @@ clean_data <- clean_data %>%
 # names(clean_data)[names(clean_data) == "a2_district"] <- "a2_district_code"
 # names(clean_data)[names(clean_data) == "a3_sub_district"] <- "a3_sub_district_code"
 
-## Prepare dashboard-ready file
-dashboard <- clean_data %>% select(-c("country_name", "country_id")) %>%
-  mutate(a9_Site_Classification=" ", a4_site_code = " ") %>%
-  setnames(old = c("a1_governorate_name", "X_id", "uuid", "X_submission_time"),
-           new = c("a1_governorate", "_id", "_uuid", "_submission_time"),
-           skip_absent = T)
-
-# dashboard$a9_Site_Classification <- " "
-# dashboard$a4_site_code <- " "
-# dashboard$country_name <- NULL
-# dashboard$country_id <- NULL
-
-# names(dashboard)[names(dashboard) == "a1_governorate_name"] <- "a1_governorate"
-# names(dashboard)[names(dashboard) == "X_id"] <- "_id"
-# names(dashboard)[names(dashboard) == "uuid"] <- "_uuid"
-# names(dashboard)[names(dashboard) == "index"] <- "_index"
-# names(dashboard)[names(dashboard) == "X_submission_time"] <- "_submission_time"
-
-db_rename <- select(dashboard, -c("q0_4_date", "a5_1_gps_longitude", "a5_2_gps_latitude", "a6_site_occupation_date_dd_mm_yy", 
-                                  "a7_site_population_hh", "a7_site_population_individual", "a1_governorate", "a1_governorate_code",
-                                  "a2_district_name", "a2_district_code", "a3_sub_district_name", "a3_sub_district_code","a4_site_code", "a4_site_name")) %>%
-  as.data.frame
-db_rename[] <- choices$label..english[match(unlist(db_rename), choices$name)] # Makes sure what this does with Dami. It seems to filter the whole data frame to keep only responses that are part of choices$names
-# For now as it kills all site columns that don't match with choices.
-
-db_norename <- select(dashboard, c("q0_4_date", "a5_1_gps_longitude", "a5_2_gps_latitude", "a6_site_occupation_date_dd_mm_yy", 
-                                   "a7_site_population_hh", "a7_site_population_individual", "a1_governorate", "a1_governorate_code",
-                                   "a2_district_name", "a2_district_code", "a3_sub_district_name", "a3_sub_district_code",
-                                   "a4_site_name", "a4_site_code"))
-
-final_dashboard <- cbind(db_rename, db_norename)
-
-final_dashboard$a8_population_groups_other_than_idps_in_site_select_all_applicable <- str_replace_all(final_dashboard$a8_population_groups_other_than_idps_in_site_select_all_applicable, pattern = " ", replacement = " - ")
-final_dashboard$a8_population_groups_other_than_idps_in_site_select_all_applicable <- str_replace_all(final_dashboard$a8_population_groups_other_than_idps_in_site_select_all_applicable, pattern = "_", replacement = " ")
-final_dashboard$a4_site_code <- str_replace_all(final_dashboard$a4_site_code, pattern = "_", replacement = " - ")
-
-final_dashboard <- final_dashboard[moveme(names(final_dashboard), "a1_governorate after q1_3_key_informat_mobile_number; a1_governorate_code after a1_governorate;
-                                          a2_district_name after a1_governorate_code; a2_district_code after a2_district_name; a3_sub_district_name after a2_district_code;
-                                          a3_sub_district_code after a3_sub_district_name; a4_site_name after a3_sub_district_code; a4_site_code after a4_site_name")]
-
-final_dashboard <- final_dashboard[moveme(names(final_dashboard), "q0_4_date after q0_3_organization_other; a5_1_gps_longitude after a5_gps_coordinates; 
-                                          a5_2_gps_latitude after a5_1_gps_longitude; a6_site_occupation_date_dd_mm_yy after a5_2_gps_latitude; 
-                                          a7_site_population_hh after a6_site_occupation_date_dd_mm_yy; a7_site_population_individual after a7_site_population_hh;
-                                          a9_Site_Classification after a9_formal_informal")]
-
-write.xlsx(final_dashboard, paste0("./output/dashboard/CCCM_Site Reporting_V2_",today,".xlsx"))
+## Prepare dashboard-ready file => SHOULD BE ONLY IN DATA MERGE?
+# dashboard <- clean_data %>% select(-any_of(c("country_name", "country_id"))) %>%
+#   mutate(a9_Site_Classification=" ", a4_site_code = " ") %>%
+#   setnames(old = c("a1_governorate_name", "X_id", "uuid", "X_submission_time"),
+#            new = c("a1_governorate", "_id", "_uuid", "_submission_time"),
+#            skip_absent = T)
+# 
+# db_rename <- select(dashboard, -c("q0_4_date", "a5_1_gps_longitude", "a5_2_gps_latitude", "a6_site_occupation_date_dd_mm_yy", 
+#                                   "a7_site_population_hh", "a7_site_population_individual", "a1_governorate", "a1_governorate_code",
+#                                   "a2_district_name", "a2_district_code", "a3_sub_district_name", "a3_sub_district_code","a4_site_code", "a4_site_name")) %>%
+#   as.data.frame
+# 
+# db_rename[] <- choices$label..english[match(unlist(db_rename), choices$name)] 
+# 
+# db_norename <- select(dashboard, c("q0_4_date", "a5_1_gps_longitude", "a5_2_gps_latitude", "a6_site_occupation_date_dd_mm_yy", 
+#                                    "a7_site_population_hh", "a7_site_population_individual", "a1_governorate", "a1_governorate_code",
+#                                    "a2_district_name", "a2_district_code", "a3_sub_district_name", "a3_sub_district_code",
+#                                    "a4_site_name", "a4_site_code"))
+# 
+# final_dashboard <- cbind(db_rename, db_norename)
+# 
+# final_dashboard$a8_population_groups_other_than_idps_in_site_select_all_applicable <- str_replace_all(final_dashboard$a8_population_groups_other_than_idps_in_site_select_all_applicable, pattern = " ", replacement = " - ")
+# final_dashboard$a8_population_groups_other_than_idps_in_site_select_all_applicable <- str_replace_all(final_dashboard$a8_population_groups_other_than_idps_in_site_select_all_applicable, pattern = "_", replacement = " ")
+# final_dashboard$a4_site_code <- str_replace_all(final_dashboard$a4_site_code, pattern = "_", replacement = " - ")
+# 
+# final_dashboard <- final_dashboard[moveme(names(final_dashboard), "a1_governorate after q1_3_key_informat_mobile_number; a1_governorate_code after a1_governorate;
+#                                           a2_district_name after a1_governorate_code; a2_district_code after a2_district_name; a3_sub_district_name after a2_district_code;
+#                                           a3_sub_district_code after a3_sub_district_name; a4_site_name after a3_sub_district_code; a4_site_code after a4_site_name")]
+# 
+# final_dashboard <- final_dashboard[moveme(names(final_dashboard), "q0_4_date after q0_3_organization_other; a5_1_gps_longitude after a5_gps_coordinates; 
+#                                           a5_2_gps_latitude after a5_1_gps_longitude; a6_site_occupation_date_dd_mm_yy after a5_2_gps_latitude; 
+#                                           a7_site_population_hh after a6_site_occupation_date_dd_mm_yy; a7_site_population_individual after a7_site_population_hh;
+#                                           a9_Site_Classification after a9_formal_informal")]
+# 
+# write.xlsx(final_dashboard, paste0("./output/dashboard/CCCM_Site Reporting_V2_",today,".xlsx"))
 
 #write.xlsx(final_dataset, paste0("./output/CCCM_SiteReporting_Week 1 Cleaned_",today,".xlsx"))
 
@@ -235,24 +229,11 @@ write.xlsx(final_dashboard, paste0("./output/dashboard/CCCM_Site Reporting_V2_",
 final_dataset_internal <- clean_data %>% select(-c("start", "end", "q0_1_enumerator_name", "q0_2_gender", "q1_1_key_informant_name", "q1_2_key_informat_gender", "a5_gps_coordinates",
                                                    "q0_3_organization_other", "a4_other_site", "q0_4_date", "b2_exu_fp_name", "b8_community_committee_fp_name", "b9_community_committee_fp_cell", 
                                                    contains("number")))
-# final_dataset_internal <- anonymise_dataset(clean_data, c("start", "end", "q0_1_enumerator_name", "q0_2_gender", "q1_1_key_informant_name",
-#                                                     "q1_2_key_informat_gender", "q1_3_key_informat_mobile_number", "a5_gps_coordinates", "_id", "_submission_time",
-#                                                     "q0_3_organization_other", "a4_site_name2", "comments", "comments_001", "a4_other_site", "q0_4_date", "b2_exu_fp_name",
-#                                                     "b3_exu_fp_mobile_number", "b5_smc_agency_fp_name", "b6_smc_agency_fp_mobile_number", "b8_community_committee_fp_name", "b9_community_committee_fp_cell"))
-
 write.xlsx(final_dataset_internal, paste0("./output/internal/CCCM_SiteReporting_V2 Internal_",today,".xlsx"))
 
 #### EXTERNAL
 final_dataset_external <- clean_data %>% select(-c("start", "end", "q0_1_enumerator_name", "q0_2_gender", "q1_1_key_informant_name", "q1_2_key_informat_gender", "a5_gps_coordinates", 
                                                    "q0_3_organization_other", "a4_other_site", "a5_1_gps_longitude", "a5_2_gps_latitude", "b2_exu_fp_name", "b2_exu_fp_name", "b8_community_committee_fp_name", 
                                                    "b9_community_committee_fp_cell", "q0_3_organization", "q0_4_date", "b7_community_committee_in_place"), contains("number"))
-
-# final_dataset_external <- anonymise_dataset(clean_data, c("start", "end", "q0_1_enumerator_name", "q0_2_gender", "q1_1_key_informant_name",
-#                                                              "q1_2_key_informat_gender", "q1_3_key_informat_mobile_number", "a5_gps_coordinates", "__version__", "_id", "_submission_time", "_validation_status",
-#                                                              "q0_3_organization_other", "a4_site_name2", "comments", "comments_001", "a4_other_site", "a5_1_gps_longitude", "a5_2_gps_latitude", "b2_exu_fp_name",
-#                                                              "b2_exu_fp_name", "b3_exu_fp_mobile_number", "b5_smc_agency_fp_name", "b6_smc_agency_fp_mobile_number", "b8_community_committee_fp_name", "b9_community_committee_fp_cell",
-#                                                              "q0_3_organization", "q0_4_date", "b3_smc_agency_fp_name", "b4_smc_agency_fp_mobile_number", "b6_community_committee_fp_name", "b7_community_committee_fp_cell in external",
-#                                                              "b4_site_smc_agency_name", "b7_community_committee_in_place"))
-
 write.xlsx(final_dataset_external, paste0("./output/external/CCCM_SiteReporting_V2 External_",today,".xlsx"))    
 

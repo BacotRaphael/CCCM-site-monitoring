@@ -70,7 +70,7 @@ clean.gps <- function(df,x,y){
         issue_lon == "Longitude invalid format: mix beteen DD and DMS" ~ gsub("E|?", "", gsub(" ", "", !!sym(x))) %>% as.numeric,
         issue_lon == "Longitude not in DD but in DMS" ~ parzer::parse_lon(!!sym(x)) %>% as.numeric,
         issue_lon == "Longitude include invalid characters" ~ gsub(",|-|\\/|\\\\| ", "", !!sym(x)) %>% as.numeric,
-        TRUE ~ !!sym(x) %>% as.numeric),
+        TRUE ~ !!sym(x) %>% arabic.tonumber %>% as.numeric),
       issue_lat = case_when(
         is.na(!!sym(y)) ~ "No coordinates entered: follow-up",
         !!sym(y) %>% as.numeric == 0 ~ "Invalid Latitude coordinate (0)",
@@ -89,8 +89,8 @@ clean.gps <- function(df,x,y){
         issue_lat == "Latitude invalid format: mix beteen DD and DMS" ~ gsub("N|?", "", gsub(" ", "", !!sym(y))) %>% as.numeric,
         issue_lat == "Latitude not in DD but in DMS" ~ parzer::parse_lat(!!sym(y)) %>% as.numeric,
         issue_lat == "Latitude include invalid characters" ~ gsub(",|-|\\/|\\\\| ", "", !!sym(y)) %>% as.numeric,
-        TRUE ~ !!sym(y) %>% as.numeric),
-      issue.gps = ifelse((issue_lon!="") | (issue_lat!=""), paste0(issue_lon,", ", issue_lat), NA)
+        TRUE ~ !!sym(y) %>% arabic.tonumber %>% as.numeric),
+      issue.gps = ifelse((issue_lon!="") | (issue_lat!=""), paste0(issue_lon,", ", issue_lat), "")
     )
   return(df.temp)
 }
@@ -354,6 +354,30 @@ get.old.value.label <- function(cl){
   return(cl)
 }
 
+arabic.tonumber <- function(s){
+  arabic <- c("\u0660\u0661\u0662\u0663\u0664\u0665\u0666\u0667\u0668\u0669\u06F0\u06F1\u06F2\u06F3\u06F4\u06F5\u06F6\u06F7\u06F8\u06F9")
+  english <- c("01234567890123456789")
+  res <- as.numeric(chartr(arabic,english,s))
+  return(res)
+}
+
+arabic.tonumber("٤٥.٣٧٢٢٦٢")
+
+is.Arabic<-function(utf8char) #returns TRUE if utf8char is within the Arabic Unicode ranges
+{
+  v<-utf8ToInt(utf8char)
+  if (v %in% 0x0600: 0x06FF) return (TRUE)
+  if (v %in% 0x0750: 0x077F) return (TRUE)
+  if (v %in% 0x08A0: 0x08FF) return (TRUE)
+  if (v %in% 0xFB50: 0xFDFF) return (TRUE)
+  if (v %in% 0xFE70: 0xFEFF) return (TRUE)
+  if (v %in% 0x1EE00:0x1EEFF) return (TRUE)
+  FALSE
+}
+
+## Archived code
+
+
 
 add.to.cleaning.log.old <- function(checks, question.names=c(), issue="", new.value="" , fix="Checked with partner", checked_by="ON", add.col=c("")){
   for(q.n in question.names){
@@ -383,7 +407,6 @@ cleaning.log.new.entries <- function(df, var, issue_type ="", new_value=" ", fix
            checked_by = checked_by) %>% 
     select(uuid, agency, area, variable, issue, old_value, new_value, fix, checked_by)
 }
-## Archived code
 
 save.follow.up.requests.original <- function(){
   cols <- c("uuid", "agency", "area", 
