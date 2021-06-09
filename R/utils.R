@@ -142,7 +142,7 @@ add.to.cleaning.log <- function(checks, check_id, question.names=c(), issue="", 
                variable=q.n,
                issue=issue,
                check_id=check_id,
-               old_value=!!sym(q.n),
+               old_value=!!sym(q.n) %>% as.character,
                new_value=new.value,
                fix=fix,
                checked_by=checked_by)
@@ -196,12 +196,14 @@ save.follow.up.requests <- function(cl, filename.out="output/test.xlsx"){
   col.style <- createStyle(textDecoration="bold", fgFill="#CECECE",halign="center",
                            border="TopBottomLeftRight", borderColour="#000000")
   
+  setColWidths(wb, "Follow-up", cols=1, widths=20)
   setColWidths(wb, "Follow-up", cols=2, widths=15)
   setColWidths(wb, "Follow-up", cols=3, widths=15)
-  setColWidths(wb, "Follow-up", cols=c(1,4,8:9), widths="auto")
+  setColWidths(wb, "Follow-up", cols=c(4,9), widths="auto")
   setColWidths(wb, "Follow-up", cols=5, widths=60)
   setColWidths(wb, "Follow-up", cols=6, widths=15)
   setColWidths(wb, "Follow-up", cols=7, widths=15)
+  setColWidths(wb, "Follow-up", cols=8, widths=30)
   setColWidths(wb, "Follow-up", cols=10, widths=15)
   
   addStyle(wb, "Follow-up", style = createStyle(wrapText=T), rows = 1:(ncol(cl)+1), cols=6)

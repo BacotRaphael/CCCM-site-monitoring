@@ -111,7 +111,7 @@ new.sites.uuid <- new.sites$uuid
 
 ## Assign the new official name in English + Arabic
 new.sites %>% write.xlsx(paste0("output/new_sites_",today, ".xlsx"))
-# browseURL(paste0("output/new_sites_",today, ".xlsx"))                         # Enter the name of site in English and Arabic, and save the file with "_updated" at the end of the name
+# browseURL(paste0("output/new_sites_",today, ".xlsx"))                         # Manually enter the name of site in English and Arabic, and save the file with "_updated" at the end of the name
 # Read the updated sitename file
 new.sites.updated <- read.xlsx(paste0("output/new_sites_",today, "_updated.xlsx")) 
 if (new.sites.updated %>% filter(is.na(new_site_name_en) | is.na(new_site_name_ar)) %>% nrow > 0){print("You didn't assign name in english and or Arabic for all new sites. Please redo the previous step.")}
@@ -130,7 +130,7 @@ for (n in seq_along(1:nrow(cleaning.log))){
   if (new_value %in% c("confirmed", "Confirmed")) {new_value <- cleaning.log[n, "old_value"]} else {  # Tell to keep old value if new value is "confirmed"
     new_value <- cleaning.log[n, "new_value"]}
   if (col %in% colnames(clean_data)) {
-    clean_data[clean_data$uuid==cleaning.log[n,"uuid"], col] <- new_value                                 # Assign new value to the variable in the dataframe response
+    clean_data[clean_data$uuid==cleaning.log[n,"uuid"], col] <- new_value                             # Assign new value to the variable in the dataframe response
   }
 }
 
