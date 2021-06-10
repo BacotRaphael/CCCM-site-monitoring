@@ -9,8 +9,9 @@ today <- Sys.Date()
 
 ## Install/Load libraries
 if (!require("pacman")) install.packages("pacman")
-pacman::p_load(tidyverse, data.table, openxlsx, reshape2,sf, leaflet, readxl, withr, mapview, randomcoloR)
+pacman::p_load(tidyverse, data.table, openxlsx, reshape2,sf, leaflet, readxl, withr, mapview, randomcoloR, arabicStemR)
 p_load_gh("mabafaba/cleaninginspectoR","impact-initiatives-research/clog")
+# install.packages("arabicStemR")                                                 # To transliterate in english the arabic sitenames
 
 ## Source
 source("./R/cleanHead.R")
@@ -35,7 +36,8 @@ masterlist <- read.xlsx(sitemasterlist.filename) %>%
   setNames(gsub("\\.", "_", colnames(.))) %>% 
   setnames(old = c("SITE_ID", "Site_Name", "Site_Name_In_Arabic"),
            new = c("Site_ID", "Site_Name", "Site_Name_In_Arabic"), 
-           skip_absent = TRUE)
+           skip_absent = TRUE) %>%
+  mutate_at(vars(-matches("_Households|_Population|_IDPs")), as.character)      # mutate all names and IDs as character to enable matching
 
 ## Tool columns comparison
 # responsev1 <- read.xlsx(rawdata.filename.v1)
@@ -75,7 +77,8 @@ response <- response %>%
                  matches("primary_cooking_space."),
                  matches("pafe_cooking_practices."),
                  any_of(c("subscriberid", "b3_SCMCHAIC_fp_number", "b3_exu_fp_mobile_number", "b6_cccm_agency_fp_mobile_number", "b9_community_committee_fp_cell", "phonenumber", "q1_3_key_informat_mobile_number"))), 
-            ~ as.numeric(gsub(",", "", arabic.tonumber(.))))
+            ~ as.numeric(gsub(",", "", arabic.tonumber(.)))) %>%
+  mutate_at(vars(matches("\\.other$|_other$|_please_specify$|_other_site")), as.character)          # Ensure right format of sitename for matching [shouldn't be necessary if there are entries for this column]
 
 ## Load survey questions from kobo tool
 tool <- if (tool.version == "V1") {read.xlsx(tool.filename.v1, sheet = "survey")} else if(tool.version == "V2") {read.xlsx(tool.filename.v2, sheet = "survey")} else {print("invalid tool entered, should be either V1 or V2")}
@@ -120,9 +123,10 @@ replacement <- rep("", length(pattern_arabic))
 masterlist <- masterlist %>%
   mutate(Site_Name_In_Arabic_tidy = str_replace_all(Site_Name_In_Arabic, setNames(replacement, pattern_arabic)))
 response <- response %>%
-  mutate(Site_Name_In_Arabic_tidy_df = str_replace_all(a4_other_site, setNames(replacement, pattern_arabic)))
+  mutate(Site_Name_In_Arabic_tidy_df = str_replace_all(a4_other_site, setNames(replacement, pattern_arabic))) %>%
+  relocate(Site_Name_In_Arabic_tidy_df, .after = "a4_other_site")
 
-# B. Comparing left_join with perfect match with left_join with arabic names tidy ("cleaned from patterns") as well as partial_match
+# B. Comparing  perfect match with cleaned/tidyed arabic names match ("cleaned from patterns") as well as partial_match (which split sitename in substrings and look whether it matches part of a sitename in arabic in the masterlist)
 check_sitename <- response %>% 
   select(matches("site_name|other_site"), everything()) %>%
   left_join(masterlist %>% select(Site_ID, Site_Name, Site_Name_In_Arabic) %>%  # Perfect match with arabic sitename in masterlist
@@ -131,7 +135,7 @@ check_sitename <- response %>%
   left_join(masterlist %>%                                                      # Perfect match with arabic names tidy (cleaned from patterns)
               select(Site_ID, Site_Name, Site_Name_In_Arabic, Site_Name_In_Arabic_tidy) %>%
               setnames(paste0(colnames(.),"_tidy_match")) %>% dplyr::rename(Site_Name_In_Arabic_before_tidy_match = Site_Name_In_Arabic_tidy_match), 
-            by = c("a4_other_site" = "Site_Name_In_Arabic_tidy_tidy_match")) %>%
+            by = c("Site_Name_In_Arabic_tidy_df" = "Site_Name_In_Arabic_tidy_tidy_match")) %>%
   partial_join(x = ., y = masterlist %>%                                        # Splitting sitename in arabic by space as separator, and returning all sitenames that any match part of the sitename in arabic
                  select(Site_ID, Site_Name, 
                         Site_Name_In_Arabic,
@@ -140,55 +144,125 @@ check_sitename <- response %>%
                         Master_list_Sub_Dist_ID) %>%                            # WARNING THIS STEP WILL/MIGHT GENERATE DUPLICATE MATCHES, FILTER THEM OUT MANUALLY
                  setnames(paste0(colnames(.),"_partial_match")),
                pattern_x = "a4_other_site", by_y = "Site_Name_In_Arabic_partial_match") %>%
-  group_by(uuid, Site_ID_partial_match) %>% mutate(n=n()) %>% filter(!duplicated(n)) %>%
+  group_by(uuid, Site_ID_partial_match) %>%  
+  mutate(n=n()) %>% filter(!duplicated(n)) %>% ungroup %>%                      # filter out the site sub-matches that have the same site match // i.e. => partial_match split sitename in substrings with " " as separator and look for all matches for each substring.
   relocate(matches("_match"), matches("Master_list_|a1_|a2_|a3_"), .before = "a4_other_site") %>%
   mutate(flag = ifelse(!(is.na(a4_other_site)) & (a4_site_name == "other"), T, F),
          issue = ifelse(flag, "Sitename has been marked as 'Other'. Check the potential matches", ""))
-# Site_ID_perfect_match, Site_Name_perfect_match, Site_ID_tidy_match, Site_Name_tidy_match, Site_ID_partial_match, Site_Name_partial_match, Site_Name_In_Arabic_partial_match
-dup_match_sitename_log <- check_sitename %>% group_by(uuid) %>%
-  filter(flag & n()>1) %>% select(uuid, everything())
-dup_match_sitename_log1 <- sitename_log %>% filter(a1_governorate==Master_list_GOV_ID_partial)       # Filtering sitenames partial match in same governorate
-dup_match_sitename_log2 <- sitename_log %>% filter(a2_district==Master_list_Dist_ID_partial)         # Filtering sitenames partial match in same district
-dup_match_sitename_log3 <- sitename_log %>% filter(a3_sub_district==Master_list_Sub_Dist_ID_partial) # Filtering sitenames partial match in same sub district
 
+dup_match_sitename_log <- check_sitename %>% group_by(uuid) %>%                 # filter to keep only duplicates partial matches
+  filter(flag & n()>1) %>% select(uuid, everything())
+
+## filtering the sitename matches to keep only the one in same gov/dist./sub-dist. than the survey 
+dup_match_sitename_log1 <- dup_match_sitename_log %>% 
+  filter(a1_governorate == Master_list_GOV_ID_partial_match)                    # Filtering sitenames partial match in same governorate
+dup_match_sitename_log2 <- dup_match_sitename_log %>% 
+  filter(a2_district == Master_list_Dist_ID_partial_match)                      # Filtering sitenames partial match in same district
+dup_match_sitename_log3 <- dup_match_sitename_log %>% 
+  filter(a3_sub_district == Master_list_Sub_Dist_ID_partial_match)              # Filtering sitenames partial match in same sub district
+
+## Binding together the duplicate matches and single matches
 check_sitename_cleaned <- check_sitename %>%
   filter(!uuid %in% dup_match_sitename_log$uuid) %>%                            # Filter out all duplicate matches
-  bind_rows(dup_match_sitename_log3) %>% group_by(uuid) %>% mutate(n=n()) %>%   # Bind the geographically filtered duplicate matches
-  arrange(-n, uuid) %>% filter(flag) %>% 
-  select(uuid, a4_other_site, a4_site_name, issue, everything()) %>% 
-  mutate(a4_site_name_new = "", a4_site_name_new_name_en = "", a4_site_name_new_name_ar = "", .after = "issue") %>%
-  select(uuid:a5_2_gps_latitude)
-check_sitename_cleaned %>% write.xlsx(paste0("output/site_name_log_",today,".xlsx"))
-# check_site_name <- response2 %>%                                                # Flag, filter and categorize sitename issues
-#   mutate(flag = ifelse(!(a4_site_name %in% external_choices_site$a4_site_name) | a4_site_name == "other" | is.na(a4_site_name), T, F),
-#          sum.na.match = rowSums(across(matches("Site_Name|Site_ID"), ~is.na(.))),
-#          issue = ifelse(flag == T & a4_site_name != "other", "Issue with entered sitename. The entered P-code site is not present in the kobo list",
-#                                        ifelse(flag == T & a4_site_name == "other" & sum.na.match == 6, "Issue with entered sitename. No potential match were found for the other sitename entered in Arabic.",
-#                                                 ifelse(flag == T & a4_site_name == "other" & sum.na.match < 5, "The entered site name is not present in the kobo list. Potential matches to be checked in the columns Site_Name/ID", "Issue with entered sitename."))),
-#          agency=q0_3_organization, area=a4_site_name)
+  bind_rows(dup_match_sitename_log3) %>%                                        # Bind the geographically filtered duplicate matches
+  group_by(uuid) %>% mutate(n=n()) %>% arrange(q0_3_organization, -n, uuid) %>% # Sort so duplicate matches appear next to each other
+  filter(flag) %>% select(uuid, q0_3_organization, a4_site_name, issue, a4_other_site, everything()) %>% 
+  mutate(a4_other_site_translation = transliterate(a4_other_site),              # Transliterate the arabic sitename into english alphabet // test
+         keep = ifelse(n==1, "TRUE", ""),                                            # TRUE / FALSE to filter out non kept partial matches, is set to TRUE by default when there is 0 or 1 partial match
+         a4_site_name_new = "", a4_site_name_new_name_en = "", a4_site_name_new_name_ar = "", # To be filled with final sitecode/name
+         .after = "a4_other_site") %>%
+  select(uuid:a5_2_gps_latitude, -start, -end, -today) %>%
+  relocate(Site_Name_In_Arabic_partial_match, .after = "Site_Name_partial_match") %>%
+  dplyr::rename(agency=q0_3_organization)
 
-## C. Add flagged sitenames to the cleaning log
-# add.to.cleaning.log(checks = check_site_name, check_id = "2",
-#                     question.names = "a4_site_name", 
-#                     issue = "issue",
-#                     add.col = c("a4_other_site", "Site_ID", "Site_Name", "Site_ID_tidy", "Site_Name_tidy", "Site_ID_partial", "Site_Name_partial"))
+# Update new name column in the sitename log when there is a perfect match [as proposition, but needs to be checked!]
+check_sitename_cleaned <- check_sitename_cleaned %>%
+  mutate(a4_site_name_new = ifelse(!is.na(Site_ID_perfect_match), Site_ID_perfect_match, a4_site_name_new),
+         a4_site_name_new_name_en = ifelse(!is.na(Site_ID_perfect_match), Site_Name_perfect_match, a4_site_name_new_name_en),
+         a4_site_name_new_name_ar = ifelse(!is.na(Site_ID_perfect_match), a4_other_site, a4_site_name_new_name_ar))
+
+# Write all sitename matches in excel file (with duplicates!)
+dir.create("output/cleaning log/site name", showWarnings = F, recursive = T)
+save.sitename.follow.up(check_sitename_cleaned, 
+                        filename.out = paste0("output/cleaning log/site name/site_name_log_", today, ".xlsx"))
+browseURL(paste0("output/cleaning log/site name/site_name_log_", today, ".xlsx"))
+
+##### Sitename log updating ####################################################
+
+## 1. Group and hide column H to O in excel sheet to ease process. 
+## 2. Go through each group of duplicate partial matches that have the same color to inspect which Site_Name_In_Arabic_partial_match 
+##    correspond to the value in a4_other_site. 
+##    If you don't read arabic, try to filter using a4_other_site_translation (which is an automatic arabic transliteration)
+##    and compare it with the different Site_Name_partial_match in english from the masterlist.
+## 3. You can either delete the rows that are false match or write "TRUE" to the column G "keep"
+## 4. After updating the sitename log, save it in the same folder with "_updated" at the end of the name
+
+################################################################################
+
+## Reading the manually updated sitename cleaning log
+sitenamelog.updated <- "output/cleaning log/site name/site_name_log_2021-06-10_updated.xlsx"
+site_name_log_updated <- read.xlsx(sitenamelog.updated) 
+values.keep <- site_name_log_updated$keep %>% unique
+print(paste0("Update the vector of values line 211 if not everybody used TRUE, T, Yes, etc. to mark the partial matches to be kept."))
+# Make sure we filtered out duplicate partial matches
+site_name_log_updated <- site_name_log_updated %>%
+  group_by(uuid) %>% mutate(n=n()) %>% ungroup %>%
+  filter((keep %in% c("TRUE", "T", "Yes", "yes", "YES", "keep", "KEEP")) |
+          n == 1) %>%                                                           # Keep only the validated partial matches and non duplicated sitenames
+  filter(!(!is.na(Site_ID_perfect_match) & (Site_ID_perfect_match != Site_ID_partial_match))) %>%                 # filter out partial matches that conflict with perfect matches
+  group_by(uuid) %>% mutate(n=n()) %>% ungroup                                  # Flag eventual remaining duplicates that might have been forgotten
+
+if ((test<-nrow(site_name_log_updated %>% filter(n>1)))>0) {
+  stop(paste0("There are ", test," remaining duplicate partial matches in sitename log! \n\nOpen the updated cleaning log file and filter them out either by deleting the non relevant matches or by setting keep column to TRUE for relevant matches"))}
+remaining.dup <- site_name_log_updated %>% filter(n>1)
+
+# site_name_log_updated <- site_name_log_updated %>%
+#   filter(!duplicated(uuid)) # ERASE LATER - To filter out duplicates // Brute force technique just for testing the whole script 
+
+## Apply changes to sitename column a4_site_name according to Partner's feedback.
+## Question: do we need to update the new name en and ar in response or useless?
+for (r in nrow(site_name_log_updated)){
+  new_id <- site_name_log_updated[r, "a4_site_name_new"]
+  new_name <- site_name_log_updated[r, "a4_site_name_new_name_en"]
+  new_name_ar <- site_name_log_updated[r, "a4_site_name_new_name_ar"]
+  if (!is.na(new_id) & !is.na(new_name) & !is.na(new_name_ar)){
+    response[response$uuid == site_name_log_updated[r,"uuid"], "a4_site_name"] <- new_id
+  }
+}
+
+# Reformatting final sitename cleaning log [mainly for attaching it to database in smaller format]
+site_name_cleaning_log <- site_name_log_updated %>%
+  dplyr::select(uuid, agency, issue, a4_other_site, a4_site_name_new, a4_site_name_new_name_en, a4_site_name_new_name_ar) %>%
+  mutate(variable = "a4_site_name", .before = "issue") %>% mutate(old_value = "other", .after = "a4_other_site") %>%
+  dplyr::rename(new_value = a4_site_name_new) %>% setNames(gsub("a4_site_name_new_", "site_", colnames(.)))
 
 ## Check 3: Match organisation other names with kobo list
 ## A. Do a partial match for Partner name in arabic from the external choice list
 choices.ngo <- choices %>% filter(list_name == "ngo") %>% 
   select(-governorate, -list_name) %>% setNames(c("ngo_code", "ngo_name_en", "ngo_name_ar"))
-response3 <- response %>%
+check_ngo_names <- response %>%
+  mutate(org_other_lower = q0_3_organization_other %>% tolower, .before =1) %>%
   left_join(choices.ngo, 
             by = c("q0_3_organization" = "ngo_code")) %>% 
-  left_join(choices.ngo %>% setNames(paste0(colnames(.), "_match_other")) , 
-            by = c("q0_3_organization_other" = "ngo_name_ar_match_other")) %>%
-  partial_join(x = ., y = choices.ngo %>% setNames(paste0(colnames(.), "_match_other_partial")),
-               pattern_x = "q0_3_organization_other", by_y = "ngo_name_ar_match_other_partial") %>%
-  select(matches("organization"), matches("^ngo_"), matches("Site_|a4_"), everything())
+  left_join(choices.ngo %>%
+              mutate(ngo_name_ar_lower = tolower(ngo_name_ar)) %>%
+              setNames(paste0(colnames(.), "_match_other")), 
+            by = c("q0_3_organization_other" = "ngo_name_ar_lower_match_other")) %>%
+  # partial_join(x = ., y = choices.ngo %>% setNames(paste0(colnames(.), "_match_other_partial")),
+  #              pattern_x = "q0_3_organization_other", by_y = "ngo_name_ar_match_other_partial") %>%
+  partial_join(x = . , y = choices.ngo %>% setNames(paste0(colnames(.), "_match_other_partial_code")),
+               pattern_x = "org_other_lower", by_y = "ngo_code_match_other_partial_code") %>%
+  select(matches("organization"), matches("^ngo_"), matches("Site_|a4_"), everything()) %>%
+  mutate(flag = ifelse(q0_3_organization == "other", T, F),
+         issue = ifelse(flag, "Sitename has been marked as 'Other'. Check the potential matches", ""))
 
-response <- response3 %>%                                                       # Apply changes for perfect matches
-  mutate(q0_3_organization = ifelse(q0_3_organization == "other" & !is.na(ngo_code_match_other), ngo_code_match_other, q0_3_organization),
-         ngo_name_en = ifelse(ngo_name_en == "Other" & !is.na(ngo_name_en_match_other), ngo_name_en_match_other, ngo_name_en))
+ngo_log <- check_ngo_names %>% select(uuid, matches("organization"), matches("_partial_code"), matches("a4_"), everything()) %>%
+  arrange(uuid, ngo_code_match_other_partial_code) %>% filter(flag) %>%
+  mutate(q0_3_organization_new_code = ifelse(!is.na(ngo_code_match_other), ngo_code_match_other, NA),
+         q0_3_organization_new_name_en = ifelse(!is.na(ngo_name_en_match_other), ngo_name_en_match_other, NA),
+         q0_3_organization_new_name_ar = ifelse(!is.na(ngo_name_ar_match_other), ngo_name_ar_match_other, NA),
+         .after = "q0_3_organization_other")
+
 
 check_ngo <- response3 %>%                                                      # Flag, filter and categorize organisation name issues
   mutate(flag = ifelse(q0_3_organization == "other" & is.na(ngo_code_match_other), T, F),

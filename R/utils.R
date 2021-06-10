@@ -95,20 +95,36 @@ clean.gps <- function(df,x,y){
   return(df.temp)
 }
 
-# x = response
-# y = masterlist
-# pattern_x = "a4_other_site"
-# by_y = "Site_Name_In_Arabic"
+# x = response %>%mutate(org_other_lower = q0_3_organization_other %>% tolower, .before =1)
+# y = choices.ngo %>% setNames(paste0(colnames(.), "_match_other_partial_code"))
+# pattern_x = "org_other_lower"
+# by_y = "ngo_code_match_other_partial_code"
 
 partial_join <- function(x, y, pattern_x, by_y){
+  z <- x[[pattern_x]] %>% str_split(" |,")                                      # splits the sitename with space as separator to see if any part of the sitename has a corresponding match
+  z <- lapply(z, function(x) paste(x, collapse="|")) %>% unlist                 # collapse all substring together with "|" statements
+  idy_y <- sapply(z, function(s) {                                              # Return the indice for any match from any of the substring in the sitename
+    if (grepl("NA|\\(|\\)", s)) {s <- gsub("NA", "", s)}                            # If there is a NA, clean it
+    if (s == "" | is.na(s)) {s} else {                                          # If there is a blank of NA, just return NA
+      res <- grep(s, y[[by_y]])}})
+  idx_x <- sapply(seq_along(idy_y), function(i) rep(i, length(idy_y[[i]])))     # calls the corresponding row numbers in x to join them to y (repeats the x match as many time as partial match in y)
+  df <- dplyr::bind_cols(x[unlist(idx_x), , drop = F],                          # calls all partial matches rows of x, repeating the multiple matches if necessary
+                         y[unlist(idy_y), , drop = F]) %>%                      # calls the partially matching rows of y => bind_cols creates the output dataframe
+    select(all_of(pattern_x), all_of(by_y), everything())
+  df <- plyr::rbind.fill(df, x[-unlist(idx_x), , drop = F])                     # add all other non matching lines 
+  
+  return(df)
+}
+
+partial_join.1 <- function(x, y, pattern_x, by_y){
   # idy_y <- sapply(x[[pattern_x]], grep, y[[by_y]])                            # for each sitename in x, get the row indices in y with corresponding partial matches (as a list)
   # idy_y <- sapply(x, grep, y[[by_y]])
   # idy_y <- sapply(x[[pattern_x]], grep, y[[by_y]])
   # idy_y <- lapply(idy_y, function(x) if (sum(!is.na(x)) > 0) {x[!is.na(x) & x!="(" & x!=")"]} )
-  z <- x[[pattern_x]] %>% str_split(" ")                                        # splits the sitename with space as separator to see if any part of the sitename has a corresponding match
-  z <- lapply(z, function(x) paste(x, collapse="|"))
+  z <- x[[pattern_x]] %>% str_split(" |,")                                      # splits the sitename with space as separator to see if any part of the sitename has a corresponding match
+  z <- lapply(z, function(x) paste(x, collapse="|")) %>% unlist                 # collapse all substring together with "|" statements
   idy_y <- sapply(x[[pattern_x]], function(s) {                                 # Return the indice for any match from any of the substring in the sitename
-    if (grepl("NA|(|)", s)) {s <- gsub("NA", "", s)}                            # If there is a NA, clean it
+    if (grepl("NA|\\(|\\)", s)) {s <- gsub("NA", "", s)}                            # If there is a NA, clean it
       if (s == "" | is.na(s)) {s} else {                                        # If there is a blank of NA, just return NA
           res <- grep(s, y[[by_y]])}})                                          # Otherwise return indices of any of the substring of the sitename entered in arabic
   idx_x <- sapply(seq_along(idy_y), function(i) rep(i, length(idy_y[[i]])))     # calls the corresponding row numbers in x to join them to y (repeats the x match as many time as partial match in y)
@@ -152,6 +168,51 @@ add.to.cleaning.log <- function(checks, check_id, question.names=c(), issue="", 
     cleaning.log <<- bind_rows(cleaning.log, df %>% arrange(uuid, variable, agency))
   }
 }
+
+save.sitename.follow.up <- function(cl, filename.out="output/test.xlsx"){
+  # save sitename follow-up requests
+  wb <- createWorkbook()
+  addWorksheet(wb, "Follow-up")
+  writeData(wb = wb, x = cl, sheet = "Follow-up", startRow = 1)
+  
+  style.col.color <- createStyle(fgFill="#E5FFCC", border="TopBottomLeftRight", borderColour="#000000")
+  style.col.color.first <- createStyle(textDecoration="bold", fgFill="#E5FFCC",
+                                       border="TopBottomLeftRight", borderColour="#000000", wrapText=F)
+  
+  addStyle(wb, "Follow-up", style = style.col.color, rows = 1:(nrow(cl)+1), cols=4)
+  addStyle(wb, "Follow-up", style = style.col.color, rows = 1:(nrow(cl)+1), cols=5)
+  col.style <- createStyle(textDecoration="bold", fgFill="#CECECE", halign="left",
+                           border="TopBottomLeftRight", borderColour="#000000")
+  
+  setColWidths(wb, "Follow-up", cols=1, widths=25)
+  setColWidths(wb, "Follow-up", cols=2, widths=8)
+  setColWidths(wb, "Follow-up", cols=3, widths=12.5)
+  setColWidths(wb, "Follow-up", cols=4, widths=31)
+  setColWidths(wb, "Follow-up", cols=5, widths=20)
+  setColWidths(wb, "Follow-up", cols=6, widths=15)
+  setColWidths(wb, "Follow-up", cols=7, widths=7)
+  setColWidths(wb, "Follow-up", cols=c(8:9), widths=15)
+  setColWidths(wb, "Follow-up", cols=(10:15), widths=15)
+  setColWidths(wb, "Follow-up", cols=16:18, widths=25)
+  
+  addStyle(wb, "Follow-up", style = createStyle(wrapText=T), rows = 1:(ncol(cl)+1), cols=6)
+  addStyle(wb, "Follow-up", style = createStyle(wrapText=T), rows = 1:(ncol(cl)+1), cols=7)
+  addStyle(wb, "Follow-up", style = col.style, rows = 1, cols=1:dim(cl)[2])
+  addStyle(wb, "Follow-up", style = style.col.color.first, rows = 1, cols=4)
+  addStyle(wb, "Follow-up", style = style.col.color.first, rows = 1, cols=5)
+  
+  col.id <- which(colnames(cl) %in% c("Site_ID_partial_match"))
+  random.color <- ""
+  for (r in 2:nrow(cl)){
+    if(as.character(cl[r, "uuid"])==as.character(cl[r-1, "uuid"])){
+      if (random.color == "") random.color <- randomColor(1, luminosity = "light")
+      addStyle(wb, "Follow-up", style = createStyle(fgFill=random.color, wrapText=F), 
+               rows = r:(r+1), cols=col.id)
+    } else random.color=""
+  }
+  
+  saveWorkbook(wb, filename.out, overwrite = TRUE)
+} 
 
 data.validation.list <- function(){
   choicelist <- get.select.db() %>% dplyr::select(name, choices)                  # extract list of valid answer for all survey
