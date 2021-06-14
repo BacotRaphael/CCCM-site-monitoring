@@ -1,7 +1,7 @@
 # CCCM Site Monitoring Tool - Data Cleaning script
 # REACH Yemen - raphael.bacot@reach-initiative.org
 # V10
-# 10/06/2021
+# 14/06/2021
 
 rm(list=ls())
 setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
@@ -31,14 +31,6 @@ tool.filename.v1 <- "data/CCCM_Site_Reporting_Kobo_tool_(V1)_12042021.xlsx"
 tool.filename.v2 <- "data/CCCM_Site_Reporting_Kobo_tool_(V2)_12042021.xlsx"
 sitemasterlist.filename <- "data/CCCM_IDP Hosting Site List_coordinates verification exercise_March2021.xlsx"
 
-## Load site_name masterlist to match admin names with site_name
-masterlist <- read.xlsx(sitemasterlist.filename) %>%                            
-  setNames(gsub("\\.", "_", colnames(.))) %>% 
-  setnames(old = c("SITE_ID", "Site_Name", "Site_Name_In_Arabic"),              # Put here whatever names CCCM cluster put in the latest masterlist 
-           new = c("Site_ID", "Site_Name", "Site_Name_In_Arabic"),              # Streamline colnames to keep the same script.
-           skip_absent = TRUE) %>%
-  mutate_at(vars(-matches("_Households|_Population|_IDPs")), as.character)      # mutate all names and IDs as character to enable matching
-
 ## Tool columns comparison
 # responsev1 <- read.xlsx(rawdata.filename.v1)
 # responsev2 <- read.xlsx(rawdata.filename.v2)
@@ -48,12 +40,29 @@ masterlist <- read.xlsx(sitemasterlist.filename) %>%
 # setdiff(colv1, colv2)
 # setdiff(colv2, colv1)
 
-## Load data to be cleaned
+## Load data 
 response <- if (tool.version == "V1") {read.xlsx(rawdata.filename.v1)} else if (tool.version == "V2") {read.xlsx(rawdata.filename.v2)} else {print("invalid tool entered, should be either V1 or V2")}
 response <- response %>%
   mutate(id = 1:n(), .before = "deviceid") %>%
   dplyr::rename(index = '_index', uuid = '_uuid') %>%
   setNames(tolower(colnames(.)))                                                # reduce to all lowercase
+
+## Load Kobo Tool
+tool <- if (tool.version == "V1") {read.xlsx(tool.filename.v1, sheet = "survey")} else if(tool.version == "V2") {read.xlsx(tool.filename.v2, sheet = "survey")} else {print("invalid tool entered, should be either V1 or V2")}
+## Load survey choices Using kobo to rename the site name and than merge the other column
+choices <- if (tool.version == "V1") {read.xlsx(tool.filename.v1, sheet = "choices")} else if(tool.version == "V2") {read.xlsx(tool.filename.v2, sheet = "choices")} else {print("invalid tool entered, should be either V1 or V2")}
+external_choices <- if (tool.version == "V1") {read.xlsx(tool.filename.v1, sheet = "external_choices")} else if (tool.version == "V2") {read.xlsx(tool.filename.v2, sheet = "external_choices")} else {print("invalid tool entered, should be either V1 or V2")}
+external_choices_site <- external_choices %>% filter(list_name == "sitename") %>% dplyr::rename(a4_site_name = name)
+choices_all <- bind_rows(choices, external_choices) %>%                         # For cleaning log functions
+  rbind(c("sitename", "other", "Other", "أخرى", NA, NA))
+
+## Load site name masterlist
+masterlist <- read.xlsx(sitemasterlist.filename) %>%                            
+  setNames(gsub("\\.", "_", colnames(.))) %>% 
+  setnames(old = c("SITE_ID", "Site_Name", "Site_Name_In_Arabic"),              # Put here whatever names CCCM cluster put in the latest masterlist 
+           new = c("Site_ID", "Site_Name", "Site_Name_In_Arabic"),              # Streamline colnames to keep the same script.
+           skip_absent = TRUE) %>%
+  mutate_at(vars(-matches("_Households|_Population|_IDPs")), as.character)      # mutate all names and IDs as character to enable matching
 
 ## Anonymize dataset - Update sensible columns vector by adding all new headers containing sensible information that is not needed for data followup.
 # It will ignore non matching columns, just put all columns from both tools
@@ -79,15 +88,6 @@ response <- response %>%
                  any_of(c("subscriberid", "b3_SCMCHAIC_fp_number", "b3_exu_fp_mobile_number", "b6_cccm_agency_fp_mobile_number", "b9_community_committee_fp_cell", "phonenumber", "q1_3_key_informat_mobile_number"))), 
             ~ as.numeric(gsub(",", "", unlist(lapply(., arabic.tonumber))))) %>%
   mutate_at(vars(matches("\\.other$|_other$|_please_specify$|_other_site")), as.character)          # Ensure right format of sitename for matching [shouldn't be necessary if there are entries for this column]
-
-## Load survey questions from kobo tool
-tool <- if (tool.version == "V1") {read.xlsx(tool.filename.v1, sheet = "survey")} else if(tool.version == "V2") {read.xlsx(tool.filename.v2, sheet = "survey")} else {print("invalid tool entered, should be either V1 or V2")}
-## Load survey choices Using kobo to rename the site name and than merge the other column
-choices <- if (tool.version == "V1") {read.xlsx(tool.filename.v1, sheet = "choices")} else if(tool.version == "V2") {read.xlsx(tool.filename.v2, sheet = "choices")} else {print("invalid tool entered, should be either V1 or V2")}
-external_choices <- if (tool.version == "V1") {read.xlsx(tool.filename.v1, sheet = "external_choices")} else if (tool.version == "V2") {read.xlsx(tool.filename.v2, sheet = "external_choices")} else {print("invalid tool entered, should be either V1 or V2")}
-external_choices_site <- external_choices %>% filter(list_name == "sitename") %>% dplyr::rename(a4_site_name = name)
-choices_all <- bind_rows(choices, external_choices) %>%                         # For cleaning log functions
-  rbind(c("sitename", "other", "Other", "أخرى", NA, NA))
 
 ### Initialize cleaning log - Will determine the columns to select in add.to.cleaning.log function 
 coldf <- c("uuid", "q0_3_organization", "a4_site_name")
@@ -164,7 +164,7 @@ dup_match_sitename_log3 <- dup_match_sitename_log %>%
 ## Binding together the duplicate matches and single matches
 sitename_log <- check_sitename %>%
   filter(!uuid %in% dup_match_sitename_log$uuid) %>%                            # Filter out all duplicate matches
-  bind_rows(dup_match_sitename_log3) %>%                                        # Bind the geographically filtered duplicate matches
+  bind_rows(dup_match_sitename_log3) %>%                                        # Bind the geographically filtered duplicate matches - adapt to dup_match_sitename_log1 or 2 if you don't have enough matches
   group_by(uuid) %>% mutate(n=n()) %>% arrange(q0_3_organization, -n, uuid) %>% # Sort so duplicate matches appear next to each other
   filter(flag) %>% select(uuid, q0_3_organization, a4_site_name, issue, a4_other_site, everything()) %>% 
   mutate(a4_other_site_translation = transliterate(a4_other_site),              # Transliterate the arabic sitename into english alphabet // test
@@ -710,7 +710,3 @@ response %>% write.xlsx(paste0("output/response_updated_", today,".xlsx"))
 #                     issue = "issue",                                            # if "issue", it will look for a column named "issue" in check_name. You can manually edit the issue also by writing direct text between ""
 #                     add.col = c(""))                                            # If for some reason, the logical check require a specific additionnal column to be more self explanatory. Avoid in general, it will make the cleaning log messy
 #  
-
-################################################################################
-# Archived code: 
-################################################################################

@@ -1,7 +1,6 @@
 # Cleaning functions
 
 ## Priority needs check
-
 priority.check <- function(df, var){
   df <- df %>% 
     mutate(flag = ifelse((!!sym(var) == "adequate") &
@@ -82,58 +81,6 @@ clean.gps <- function(df, x, y){
   return(df.temp)
 }
 
-clean.gps.old <- function(df, x, y){
-  df.temp <- df %>%
-    mutate(issue_lon = case_when(
-      is.na(!!sym(x)) ~ "No coordinates entered: follow-up",
-      (!!sym(x) %>% as.numeric == 0) | (!!sym(x) %>% as.numeric %>% abs > 180) ~ "Invalid Longitude coordinate",
-      near(!!sym(x) %>% as.numeric, !!sym(y) %>% as.numeric , tol = 0.2) ~ "Longitude and Latitude almost equal",
-      (!!sym(x) %>% as.numeric < 20) & (!!sym(y) %>% as.numeric < 90) &
-        (!near(!!sym(x) %>% as.numeric, !!sym(y) %>% as.numeric , tol = 0.2)) ~ "Latitude entered instead of Longitude",
-      !!sym(x) %>% as.numeric > 80 ~ "Longitude not in Decimal Degree format",
-      grepl("E", !!sym(x)) ~ "Longitude invalid format: mix beteen DD and DMS",
-      grepl("°", !!sym(x)) & !is.na(gsub("°", "", !!sym(x)) %>% as.numeric)  ~ "Longitude invalid format: mix beteen DD and DMS",
-      grepl("°|'", !!sym(x)) ~ "Longitude not in DD but in DMS",
-      grepl(",|-|\\/|\\\\|،", !!sym(x)) ~ "Longitude include invalid characters",
-      TRUE ~ ""),
-      Longitude_clean = case_when(
-        issue_lon == "Invalid Longitude coordinate" ~ NA_real_,
-        issue_lon == "Latitude entered instead of Longitude" ~ !!sym(y) %>% as.numeric,
-        issue_lon == "Longitude not in Decimal Degree format" ~ NA_real_,
-        issue_lon == "Longitude invalid format: mix beteen DD and DMS" ~ gsub("E|?", "", gsub(" ", "", !!sym(x))) %>% as.numeric,
-        issue_lon == "Longitude not in DD but in DMS" ~ parzer::parse_lon(gsub("\"|E|LON", "", !!sym(x))) %>% as.numeric,
-        issue_lon == "Longitude include invalid characters" ~ gsub(",|-|\\/|\\\\| |،", "", !!sym(x)) %>% as.numeric,
-        TRUE ~ !!sym(x) %>% arabic.tonumber %>% as.numeric),
-      issue_lat = case_when(
-        is.na(!!sym(y)) ~ "No coordinates entered: follow-up",
-        (!!sym(y) %>% as.numeric == 0) | (!!sym(y) %>% as.numeric %>% abs > 90) ~ "Invalid Latitude coordinate",
-        near(!!sym(x) %>% as.numeric, !!sym(y) %>% as.numeric , tol = 0.2) ~ "Longitude and Latitude almost equal",
-        !!sym(y) %>% as.numeric > 80 ~ "Latitude not in Decimal Degree format",
-        (!!sym(y) %>% as.numeric > 20) & (!!sym(x) %>% as.numeric < 180) &
-          (!near(!!sym(x) %>% as.numeric, !!sym(y) %>% as.numeric , tol = 0.2)) ~ "Longitude entered instead of Latitude",
-        grepl("N", !!sym(y)) ~ "Latitude invalid format: mix beteen DD and DMS",
-        grepl("°", !!sym(y)) & !is.na(gsub("°", "", !!sym(x)) %>% as.numeric)  ~ "Latitude invalid format: mix beteen DD and DMS",
-        grepl("°|'", !!sym(y)) ~ "Latitude not in DD but in DMS",
-        grepl(",|-|\\/|\\\\| |،", !!sym(y)) ~ "Latitude include invalid characters",
-        TRUE ~ ""),
-      Latitude_clean = case_when(
-        issue_lat == "Invalid Latitude coordinate" ~ NA_real_,
-        issue_lat == "Latitude not in Decimal Degree format" ~ NA_real_,
-        issue_lat == "Longitude entered instead of Latitude" ~ !!sym(x) %>% as.numeric,
-        issue_lat == "Latitude invalid format: mix beteen DD and DMS" ~ gsub("N|?", "", gsub(" ", "", !!sym(y))) %>% as.numeric,
-        issue_lat == "Latitude not in DD but in DMS" ~ parzer::parse_lat(gsub("\"|N|LAT", "", !!sym(y))) %>% as.numeric,
-        issue_lat == "Latitude include invalid characters" ~ gsub(",|-|\\/|\\\\| |،", "", !!sym(y)) %>% as.numeric,
-        TRUE ~ !!sym(y) %>% arabic.tonumber %>% as.numeric),
-      issue.gps = ifelse((issue_lon!="") | (issue_lat!=""), paste0(issue_lon,", ", issue_lat), "")
-    )
-  return(df.temp)
-}
-
-# x = response %>%mutate(org_other_lower = q0_3_organization_other %>% tolower, .before =1)
-# y = choices.ngo %>% setNames(paste0(colnames(.), "_match_other_partial_code"))
-# pattern_x = "org_other_lower"
-# by_y = "ngo_code_match_other_partial_code"
-
 partial_join <- function(x, y, pattern_x, by_y){
   z <- x[[pattern_x]] %>% str_split(" |,")                                      # splits the sitename with space as separator to see if any part of the sitename has a corresponding match
   z <- lapply(z, function(x) paste(x, collapse="|")) %>% unlist                 # collapse all substring together with "|" statements
@@ -141,26 +88,6 @@ partial_join <- function(x, y, pattern_x, by_y){
     if (grepl("NA|\\(|\\)", s)) {s <- gsub("NA", "", s)}                            # If there is a NA, clean it
     if (s == "" | is.na(s)) {s} else {                                          # If there is a blank of NA, just return NA
       res <- grep(s, y[[by_y]])}})
-  idx_x <- sapply(seq_along(idy_y), function(i) rep(i, length(idy_y[[i]])))     # calls the corresponding row numbers in x to join them to y (repeats the x match as many time as partial match in y)
-  df <- dplyr::bind_cols(x[unlist(idx_x), , drop = F],                          # calls all partial matches rows of x, repeating the multiple matches if necessary
-                         y[unlist(idy_y), , drop = F]) %>%                      # calls the partially matching rows of y => bind_cols creates the output dataframe
-    select(all_of(pattern_x), all_of(by_y), everything())
-  df <- plyr::rbind.fill(df, x[-unlist(idx_x), , drop = F])                     # add all other non matching lines 
-  
-  return(df)
-}
-
-partial_join.1 <- function(x, y, pattern_x, by_y){
-  # idy_y <- sapply(x[[pattern_x]], grep, y[[by_y]])                            # for each sitename in x, get the row indices in y with corresponding partial matches (as a list)
-  # idy_y <- sapply(x, grep, y[[by_y]])
-  # idy_y <- sapply(x[[pattern_x]], grep, y[[by_y]])
-  # idy_y <- lapply(idy_y, function(x) if (sum(!is.na(x)) > 0) {x[!is.na(x) & x!="(" & x!=")"]} )
-  z <- x[[pattern_x]] %>% str_split(" |,")                                      # splits the sitename with space as separator to see if any part of the sitename has a corresponding match
-  z <- lapply(z, function(x) paste(x, collapse="|")) %>% unlist                 # collapse all substring together with "|" statements
-  idy_y <- sapply(x[[pattern_x]], function(s) {                                 # Return the indice for any match from any of the substring in the sitename
-    if (grepl("NA|\\(|\\)", s)) {s <- gsub("NA", "", s)}                            # If there is a NA, clean it
-      if (s == "" | is.na(s)) {s} else {                                        # If there is a blank of NA, just return NA
-          res <- grep(s, y[[by_y]])}})                                          # Otherwise return indices of any of the substring of the sitename entered in arabic
   idx_x <- sapply(seq_along(idy_y), function(i) rep(i, length(idy_y[[i]])))     # calls the corresponding row numbers in x to join them to y (repeats the x match as many time as partial match in y)
   df <- dplyr::bind_cols(x[unlist(idx_x), , drop = F],                          # calls all partial matches rows of x, repeating the multiple matches if necessary
                          y[unlist(idy_y), , drop = F]) %>%                      # calls the partially matching rows of y => bind_cols creates the output dataframe
@@ -204,7 +131,7 @@ add.to.cleaning.log <- function(checks, check_id, question.names=c(), issue="", 
 }
 
 save.org.name.follow.up <- function(cl, filename.out="output/test.xlsx"){
-  # save sitename follow-up requests
+  # save organisation name follow-up requests
   wb <- createWorkbook()
   addWorksheet(wb, "Follow-up")
   writeData(wb = wb, x = cl, sheet = "Follow-up", startRow = 1)
@@ -417,13 +344,6 @@ get.select.db <- function(){
     mutate(choices=paste(name, collapse=";\n"),
            choices.label=paste(`label::english`, collapse=";\n")) %>% 
     summarise(choices=choices[1], choices.label=choices.label[1])
-  # list of external choices for each list_name
-  # list.choices.external <- external_choices %>% filter(!is.na(list_name)) %>% group_by(list_name) %>%
-  #   mutate(choices=paste(name, collapse=";\n"),
-  #          choices.label=paste(`label::english`, collapse=";\n")) %>%
-  #   summarise(choices=choices[1], choices.label=choices.label[1])
-  # list.choices <- bind_rows(list.choices, list.choices.external)
-  # list of choices for each question
   select.questions <- tool %>% select(type, name) %>% 
     mutate(q.type=as.character(lapply(type, get.q.type)),
            list_name=as.character(lapply(type, get.choice.list.name))) %>% 
@@ -531,8 +451,6 @@ arabic.tonumber <- function(s){
   return(res)
 }
 
-arabic.tonumber("٤٥.٣٧٢٢٦٢")
-
 is.Arabic<-function(utf8char) #returns TRUE if utf8char is within the Arabic Unicode ranges
 {
   v<-utf8ToInt(utf8char)
@@ -546,109 +464,121 @@ is.Arabic<-function(utf8char) #returns TRUE if utf8char is within the Arabic Uni
 }
 
 ## Archived code
+# 
+# add.to.cleaning.log.old <- function(checks, question.names=c(), issue="", new.value="" , fix="Checked with partner", checked_by="ON", add.col=c("")){
+#   for(q.n in question.names){
+#     new.entries <- checks %>% filter(flag) %>% 
+#       mutate(uuid=uuid,
+#              variable=q.n,
+#              issue=issue,
+#              old_value=!!sym(q.n),
+#              new_value=new.value,
+#              fix=fix,
+#              checked_by=checked_by)
+#     new.entries <- new.entries %>% select(all_of(col.cl), any_of(add.col))
+#     cleaning.log <<- bind_rows(cleaning.log, new.entries)
+#   }
+# }
+# 
+# cleaning.log.new.entries <- function(df, var, issue_type ="", new_value=" ", fix="Checked with partner", checked_by="ON") {
+#   new.entries <- df %>% ungroup() %>%
+#     mutate(uuid = uuid,
+#            agency = q0_3_organization, 
+#            area = a4_site_name3, 
+#            variable = var, 
+#            issue = issue_type, 
+#            old_value = !!sym(var), 
+#            new_value = new_value, 
+#            fix = fix, 
+#            checked_by = checked_by) %>% 
+#     select(uuid, agency, area, variable, issue, old_value, new_value, fix, checked_by)
+# }
 
 
+# clean.gps.old <- function(df, x, y){
+#   df.temp <- df %>%
+#     mutate(issue_lon = case_when(
+#       is.na(!!sym(x)) ~ "No coordinates entered: follow-up",
+#       (!!sym(x) %>% as.numeric == 0) | (!!sym(x) %>% as.numeric %>% abs > 180) ~ "Invalid Longitude coordinate",
+#       near(!!sym(x) %>% as.numeric, !!sym(y) %>% as.numeric , tol = 0.2) ~ "Longitude and Latitude almost equal",
+#       (!!sym(x) %>% as.numeric < 20) & (!!sym(y) %>% as.numeric < 90) &
+#         (!near(!!sym(x) %>% as.numeric, !!sym(y) %>% as.numeric , tol = 0.2)) ~ "Latitude entered instead of Longitude",
+#       !!sym(x) %>% as.numeric > 80 ~ "Longitude not in Decimal Degree format",
+#       grepl("E", !!sym(x)) ~ "Longitude invalid format: mix beteen DD and DMS",
+#       grepl("°", !!sym(x)) & !is.na(gsub("°", "", !!sym(x)) %>% as.numeric)  ~ "Longitude invalid format: mix beteen DD and DMS",
+#       grepl("°|'", !!sym(x)) ~ "Longitude not in DD but in DMS",
+#       grepl(",|-|\\/|\\\\|،", !!sym(x)) ~ "Longitude include invalid characters",
+#       TRUE ~ ""),
+#       Longitude_clean = case_when(
+#         issue_lon == "Invalid Longitude coordinate" ~ NA_real_,
+#         issue_lon == "Latitude entered instead of Longitude" ~ !!sym(y) %>% as.numeric,
+#         issue_lon == "Longitude not in Decimal Degree format" ~ NA_real_,
+#         issue_lon == "Longitude invalid format: mix beteen DD and DMS" ~ gsub("E|?", "", gsub(" ", "", !!sym(x))) %>% as.numeric,
+#         issue_lon == "Longitude not in DD but in DMS" ~ parzer::parse_lon(gsub("\"|E|LON", "", !!sym(x))) %>% as.numeric,
+#         issue_lon == "Longitude include invalid characters" ~ gsub(",|-|\\/|\\\\| |،", "", !!sym(x)) %>% as.numeric,
+#         TRUE ~ !!sym(x) %>% arabic.tonumber %>% as.numeric),
+#       issue_lat = case_when(
+#         is.na(!!sym(y)) ~ "No coordinates entered: follow-up",
+#         (!!sym(y) %>% as.numeric == 0) | (!!sym(y) %>% as.numeric %>% abs > 90) ~ "Invalid Latitude coordinate",
+#         near(!!sym(x) %>% as.numeric, !!sym(y) %>% as.numeric , tol = 0.2) ~ "Longitude and Latitude almost equal",
+#         !!sym(y) %>% as.numeric > 80 ~ "Latitude not in Decimal Degree format",
+#         (!!sym(y) %>% as.numeric > 20) & (!!sym(x) %>% as.numeric < 180) &
+#           (!near(!!sym(x) %>% as.numeric, !!sym(y) %>% as.numeric , tol = 0.2)) ~ "Longitude entered instead of Latitude",
+#         grepl("N", !!sym(y)) ~ "Latitude invalid format: mix beteen DD and DMS",
+#         grepl("°", !!sym(y)) & !is.na(gsub("°", "", !!sym(x)) %>% as.numeric)  ~ "Latitude invalid format: mix beteen DD and DMS",
+#         grepl("°|'", !!sym(y)) ~ "Latitude not in DD but in DMS",
+#         grepl(",|-|\\/|\\\\| |،", !!sym(y)) ~ "Latitude include invalid characters",
+#         TRUE ~ ""),
+#       Latitude_clean = case_when(
+#         issue_lat == "Invalid Latitude coordinate" ~ NA_real_,
+#         issue_lat == "Latitude not in Decimal Degree format" ~ NA_real_,
+#         issue_lat == "Longitude entered instead of Latitude" ~ !!sym(x) %>% as.numeric,
+#         issue_lat == "Latitude invalid format: mix beteen DD and DMS" ~ gsub("N|?", "", gsub(" ", "", !!sym(y))) %>% as.numeric,
+#         issue_lat == "Latitude not in DD but in DMS" ~ parzer::parse_lat(gsub("\"|N|LAT", "", !!sym(y))) %>% as.numeric,
+#         issue_lat == "Latitude include invalid characters" ~ gsub(",|-|\\/|\\\\| |،", "", !!sym(y)) %>% as.numeric,
+#         TRUE ~ !!sym(y) %>% arabic.tonumber %>% as.numeric),
+#       issue.gps = ifelse((issue_lon!="") | (issue_lat!=""), paste0(issue_lon,", ", issue_lat), "")
+#     )
+#   return(df.temp)
+# }
 
-add.to.cleaning.log.old <- function(checks, question.names=c(), issue="", new.value="" , fix="Checked with partner", checked_by="ON", add.col=c("")){
-  for(q.n in question.names){
-    new.entries <- checks %>% filter(flag) %>% 
-      mutate(uuid=uuid,
-             variable=q.n,
-             issue=issue,
-             old_value=!!sym(q.n),
-             new_value=new.value,
-             fix=fix,
-             checked_by=checked_by)
-    new.entries <- new.entries %>% select(all_of(col.cl), any_of(add.col))
-    cleaning.log <<- bind_rows(cleaning.log, new.entries)
-  }
-}
+# partial_join.archived <- function(x, y, pattern_x, by_y){
+#   # idy_y <- sapply(x[[pattern_x]], grep, y[[by_y]])                            # for each sitename in x, get the row indices in y with corresponding partial matches (as a list)
+#   # idy_y <- sapply(x, grep, y[[by_y]])
+#   # idy_y <- sapply(x[[pattern_x]], grep, y[[by_y]])
+#   # idy_y <- lapply(idy_y, function(x) if (sum(!is.na(x)) > 0) {x[!is.na(x) & x!="(" & x!=")"]} )
+#   z <- x[[pattern_x]] %>% str_split(" |,")                                      # splits the sitename with space as separator to see if any part of the sitename has a corresponding match
+#   z <- lapply(z, function(x) paste(x, collapse="|")) %>% unlist                 # collapse all substring together with "|" statements
+#   idy_y <- sapply(x[[pattern_x]], function(s) {                                 # Return the indice for any match from any of the substring in the sitename
+#     if (grepl("NA|\\(|\\)", s)) {s <- gsub("NA", "", s)}                            # If there is a NA, clean it
+#     if (s == "" | is.na(s)) {s} else {                                        # If there is a blank of NA, just return NA
+#       res <- grep(s, y[[by_y]])}})                                          # Otherwise return indices of any of the substring of the sitename entered in arabic
+#   idx_x <- sapply(seq_along(idy_y), function(i) rep(i, length(idy_y[[i]])))     # calls the corresponding row numbers in x to join them to y (repeats the x match as many time as partial match in y)
+#   df <- dplyr::bind_cols(x[unlist(idx_x), , drop = F],                          # calls all partial matches rows of x, repeating the multiple matches if necessary
+#                          y[unlist(idy_y), , drop = F]) %>%                      # calls the partially matching rows of y => bind_cols creates the output dataframe
+#     select(all_of(pattern_x), all_of(by_y), everything())
+#   df <- plyr::rbind.fill(df, x[-unlist(idx_x), , drop = F])                     # add all other non matching lines 
+#   
+#   return(df)
+# }
 
-cleaning.log.new.entries <- function(df, var, issue_type ="", new_value=" ", fix="Checked with partner", checked_by="ON") {
-  new.entries <- df %>% ungroup() %>%
-    mutate(uuid = uuid,
-           agency = q0_3_organization, 
-           area = a4_site_name3, 
-           variable = var, 
-           issue = issue_type, 
-           old_value = !!sym(var), 
-           new_value = new_value, 
-           fix = fix, 
-           checked_by = checked_by) %>% 
-    select(uuid, agency, area, variable, issue, old_value, new_value, fix, checked_by)
-}
-
-save.follow.up.requests.original <- function(){
-  cols <- c("uuid", "agency", "area", 
-            "variable", "label::english", 
-            "issue", "old_value", "new_value", "explanation", "fix", "checked_by")
-  # prepare cleaning log
-  cl <- cleaning.log %>%
-    mutate(explanation="")
-  cl <- left_join(cl, select(get.select.db(), name, list_name), by=c("variable"="name"))
-  cl <- get.old.value.label(cl)
-  cl <- left_join(cl, select(choices, "name", "label::english"), by=c("variable"="name")) %>% 
-    mutate(variable.label=ifelse(is.na(`label::english`), "", `label::english`)) %>% 
-    select(all_of(cols)) %>% 
-    arrange(uuid)
-  # save follow-up requests
-  wb <- loadWorkbook(filename.follow.up.readme)
-  renameWorksheet(wb, 1, "ReadMe")
-  addWorksheet(wb, "Follow-up")
-  writeData(wb = wb, x = cl, sheet = "Follow-up", startRow = 1)
-  input.style <- createStyle(fgFill="#DDFFDD", border="TopBottomLeftRight", borderColour="#000000")
-  addStyle(wb, "Follow-up", style = input.style, rows = 2:(dim(cl)[1]+1), cols=(dim(cl)[2]-1))
-  addStyle(wb, "Follow-up", style = input.style, rows = 2:(dim(cl)[1]+1), cols=dim(cl)[2])
-  col.style <- createStyle(textDecoration="bold", fgFill="#CECECE", halign="center",
-                           border="TopBottomLeftRight", borderColour="#000000")
-  setColWidths(wb, "Follow-up", cols=3, widths=16)
-  setColWidths(wb, "Follow-up", cols=4, widths=18)
-  setColWidths(wb, "Follow-up", cols=5:9, widths=12)
-  setColWidths(wb, "Follow-up", cols=10, widths=15)
-  setColWidths(wb, "Follow-up", cols=11, widths=13)
-  setColWidths(wb, "Follow-up", cols=12, widths=11)
-  setColWidths(wb, "Follow-up", cols=13:14, widths=50)
-  setColWidths(wb, "Follow-up", cols=15, widths=25)
-  setColWidths(wb, "Follow-up", cols=16, widths=20)
-  setColWidths(wb, "Follow-up", cols=17, widths=30)
-  addStyle(wb, "Follow-up", style = createStyle(wrapText=T), rows = 1:(dim(cl)[1]+1), cols=13)
-  addStyle(wb, "Follow-up", style = createStyle(wrapText=T), rows = 1:(dim(cl)[1]+1), cols=14)
-  addStyle(wb, "Follow-up", style = createStyle(wrapText=T), rows = 1:(dim(cl)[1]+1), cols=15)
-  addStyle(wb, "Follow-up", style = col.style, rows = 1, cols=1:dim(cl)[2])
-  col.id <- which(colnames(cl)=="old_value")
-  for (r in 2:dim(cl)[1]){
-    if(as.character(cl[r, "check.id"])!="Outlier" &
-       as.character(cl[r, "check.id"])!="Other.response" &
-       as.character(cl[r, "check.id"])!="Typing" &
-       as.character(cl[r, "id"])==as.character(cl[r-1, "id"]) &
-       as.character(cl[r, "check.id"])==as.character(cl[r-1, "check.id"])){
-      random.color <- randomColor(1, luminosity = "light")
-      addStyle(wb, "Follow-up", style = createStyle(fgFill=random.color, wrapText=T), 
-               rows = r:(r+1), cols=col.id)
-    }
-  }
-  saveWorkbook(wb, filename.out.follow.up.requests, overwrite = TRUE)
-}
-
-
-partial_join_old <- function(x, y, pattern_x, by_y){
-  # idy_y <- sapply(x[[pattern_x]], grep, y[[by_y]])                            # for each sitename in x, get the row indices in y with corresponding partial matches (as a list)
-  # idy_y <- sapply(x, grep, y[[by_y]])
-  # z <- x[[pattern_x]] %>% str_split(" ") %>% gsub("\\(|\\)", "", .)
-  z <- x[[pattern_x]] %>% str_split(" ")                                        # splits the sitename with space as separator to see if any part of the sitename has a corresponding match
-  idy_y <- sapply(z, pmatch, y[[by_y]])
-  idy_y <- lapply(idy_y, function(x) if (sum(!is.na(x))> 0) {x[!is.na(x) & x!="(" & x!=")"]} )
-  idx_x <- sapply(seq_along(idy_y), function(i) rep(i, length(idy_y[[i]])))     # calls the corresponding row numbers in x to join them to y (repeats the x match as many time as partial match in y)
-  df <- dplyr::bind_cols(x[unlist(idx_x), , drop = F],                          # calls all partial matches rows of x, repeating the multiple matches if necessary
-                         y[unlist(idy_y), , drop = F]) %>%                      # calls the partially matching rows of y => bind_cols creates the output dataframe
-    select(all_of(pattern_x), all_of(by_y), everything())
-  df <- plyr::rbind.fill(df, x[-unlist(idx_x), , drop = F])                     # add all non matching
-  # add the non matching lines 
-  return(df)
-}
+# partial_join_old <- function(x, y, pattern_x, by_y){
+#   # idy_y <- sapply(x[[pattern_x]], grep, y[[by_y]])                            # for each sitename in x, get the row indices in y with corresponding partial matches (as a list)
+#   # idy_y <- sapply(x, grep, y[[by_y]])
+#   # z <- x[[pattern_x]] %>% str_split(" ") %>% gsub("\\(|\\)", "", .)
+#   z <- x[[pattern_x]] %>% str_split(" ")                                        # splits the sitename with space as separator to see if any part of the sitename has a corresponding match
+#   idy_y <- sapply(z, pmatch, y[[by_y]])
+#   idy_y <- lapply(idy_y, function(x) if (sum(!is.na(x))> 0) {x[!is.na(x) & x!="(" & x!=")"]} )
+#   idx_x <- sapply(seq_along(idy_y), function(i) rep(i, length(idy_y[[i]])))     # calls the corresponding row numbers in x to join them to y (repeats the x match as many time as partial match in y)
+#   df <- dplyr::bind_cols(x[unlist(idx_x), , drop = F],                          # calls all partial matches rows of x, repeating the multiple matches if necessary
+#                          y[unlist(idy_y), , drop = F]) %>%                      # calls the partially matching rows of y => bind_cols creates the output dataframe
+#     select(all_of(pattern_x), all_of(by_y), everything())
+#   df <- plyr::rbind.fill(df, x[-unlist(idx_x), , drop = F])                     # add all non matching
+#   # add the non matching lines 
+#   return(df)
+# }
 
 ## save.workbook cleaning log archive
-
 # 
 # save.follow.up.requests.old <- function(cl, filename.out="output/test.xlsx"){
 #   # save follow-up requests
