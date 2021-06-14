@@ -1,94 +1,128 @@
 # Cleaning functions
 
-priority.need.checks <- function(df, check=""){
-  col.priority.needs <- c("i1_top_priority_need", "i2_second_priority_need", "i3_third_priority_need")
-  service.level.var <- df %>% select(c("shelter_maintenance_services":"waste_disposal_services")) %>% colnames
-  priority.need <- c("shelter_maintenance_assistance", "non_food_items", "food", "cash_assistance", 
-                    "water", "medical_assistance", "education", "livelihood_assistance",
-                    "protection_services", "nutrition_services", "sanitation_services")
-  logical.inconsistencies <- data.frame(service.level.var, priority.need)                               # Enable calling conditions between service question header and corresponding priority need choice 
-  for (var in service.level.var) {
-    check.col <- paste0(var, "_check")
-    issue.check.col <- paste0(var, "_issue")
-    df <- df %>%
-      mutate(!!check.col := ifelse((!!sym(var) == "adequate") &
-                                     ((i1_top_priority_need==logical.inconsistencies[logical.inconsistencies$service.level.var==var, "priority.need"]) |
-                                        (i2_second_priority_need==logical.inconsistencies[logical.inconsistencies$service.level.var==var, "priority.need"]) |
-                                        (i3_third_priority_need==logical.inconsistencies[logical.inconsistencies$service.level.var==var, "priority.need"])), 1, 0),
-             !!issue.check.col := ifelse(!!sym(check.col) == 1,
-                                         paste0(var, " reported as adequate but ", logical.inconsistencies[logical.inconsistencies$service.level.var==var, "priority.need"], " cited as top three priority need. To be checked."), ""))    
-  }
-  df<-df %>% select("uuid", "q0_3_organization", "a4_site_name", all_of(c(col.priority.needs,service.level.var)), matches("_issue|_check"), -rrm_distributions)
-  list.checks <- colnames(df)[grepl("_check", colnames(df))]
-  df.long <- data.frame()
-  for (i in seq_len(nrow(df))) {
-    for (col in list.checks){
-      conflicting_variable_old_value <- logical.inconsistencies[logical.inconsistencies$service.level.var==gsub("_check","",col),"priority.need"]
-      conflicting_variable <- df[i,] %>% select(matches("priority")) %>% pivot_longer(cols=colnames(.)) %>% filter(value==conflicting_variable_old_value) %>% select(name) %>% as.character
-      df.long <- df.long %>% rbind(data.frame(
-        df[i,c("uuid", "q0_3_organization", "a4_site_name")],
-        variable = gsub("_check", "", col),
-        old_value = df[i, gsub("_check", "", col)],
-        has.issue = df[i, col],
-        issue = df[i, gsub("_check", "_issue", col)])
-        ) %>% rbind(data.frame(
-          df[i,c("uuid", "q0_3_organization", "a4_site_name")],
-          variable = conflicting_variable,
-          old_value = conflicting_variable_old_value,
-          has.issue = df[i, col],
-          issue = df[i, gsub("_check", "_issue", col)]
-          )
-        )
-    }
-  }
-  res <- df.long %>%
-    filter(has.issue==1) %>%
-    mutate(new_value = "",fix="Checked with partner", checked_by="ON", 
-           check_id = paste0(lapply(issue, function(x) str_split(x, " ")[[1]][1]), "_priority_need_check")) %>%
-    dplyr::rename(agency=q0_3_organization, area=a4_site_name) %>%
-    dplyr::select(uuid, agency, area, variable, issue, check_id, old_value, new_value, fix, checked_by)
-  return(res)
+## Priority needs check
+
+priority.check <- function(df, var){
+  df <- df %>% 
+    mutate(flag = ifelse((!!sym(var) == "adequate") &
+                           ((i1_top_priority_need==logical.inconsistencies[logical.inconsistencies$service.level.var==var, "priority.need"]) |
+                           (i2_second_priority_need==logical.inconsistencies[logical.inconsistencies$service.level.var==var, "priority.need"]) |
+                           (i3_third_priority_need==logical.inconsistencies[logical.inconsistencies$service.level.var==var, "priority.need"])), T, F),
+           issue = ifelse(flag, logical.inconsistencies[logical.inconsistencies$service.level.var==var, "issue"], "")) %>%
+    dplyr::select("uuid", "q0_3_organization", "a4_site_name", any_of(c(var, col.priority.needs)), flag, issue) %>% filter(flag) %>%
+    dplyr::rename(agency=q0_3_organization, area=a4_site_name)  
+  return(df)
 }
 
-clean.gps <- function(df,x,y){
-  df.temp<-df %>%
+priority.need.checks <- function(df){
+  col.priority.needs <- c("i1_top_priority_need", "i2_second_priority_need", "i3_third_priority_need")
+  service.level.var <- response %>% select(c("shelter_maintenance_services":"waste_disposal_services")) %>% colnames
+  priority.need <- c("shelter_maintenance_assistance", "non_food_items", "food", "cash_assistance", 
+                     "water", "medical_assistance", "education", "livelihood_assistance",
+                     "protection_services", "nutrition_services", "sanitation_services")
+  logical.inconsistencies <- data.frame(service.level.var, priority.need) %>%
+    mutate(issue=paste0(service.level.var, " reported as adequate but ", priority.need, " cited as top three priority need. To be checked."))
+  for (var in service.level.var){
+    check_var <- priority.need.checks.new(df, var)
+    add.to.cleaning.log(check_var, check_id = paste0("check_priority_", var), question.names=c(var, col.priority.needs), issue = "issue")
+  }
+  adequacy_log <<- cleaning.log %>% filter(grepl("check_priority", check_id))
+}
+
+clean.gps <- function(df, x, y){
+  df.temp <- df %>%
+    mutate(flag_lon = ifelse(grepl(",|-|\\/|\\\\|،", !!sym(x)), T, F),
+           issue_lon = ifelse(flag_lon, "Longitude include invalid characters", ""),
+           long_clean = unlist(lapply(ifelse(flag_lon, gsub("،", "\\.", gsub(",|-|\\/|\\\\", "", !!sym(x))), !!sym(x)), arabic.tonumber)),
+           
+           flag_lat = ifelse(grepl(",|-|\\/|\\\\|،", !!sym(y)), T, F),
+           issue_lat = ifelse(flag_lat, "Latitude include invalid characters", ""),
+           lat_clean = unlist(lapply(ifelse(flag_lat, gsub("،", "\\.", gsub(",|-|\\/|\\\\", "", !!sym(y))), !!sym(y)), arabic.tonumber)),
+           
+           issue_lon = case_when(
+             is.na(long_clean) ~ paste0(issue_lon, "; No coordinates entered: follow-up"),
+             (long_clean %>% as.numeric == 0) | (long_clean %>% as.numeric %>% abs > 180) ~ paste0(issue_lon, "; Invalid Longitude coordinate"),
+             near(long_clean %>% as.numeric, lat_clean %>% as.numeric , tol = 0.2) ~ paste0(issue_lon, "; Longitude and Latitude almost equal"),
+             (long_clean %>% as.numeric < 20) & (lat_clean %>% as.numeric %>% abs < 90) &
+               (!near(long_clean %>% as.numeric, lat_clean %>% as.numeric , tol = 0.2)) ~ paste0(issue_lon, "; Latitude entered instead of Longitude"),
+             grepl("E|°|\"|LON", long_clean) & 
+               !is.na(parzer::parse_lon(gsub("E|\"|LON", "", long_clean))) ~ paste0(issue_lon, "; Longitude invalid format: mix beteen DD and DMS"),
+             is.na(gsub("E|°|\"|LON|LAT", "", long_clean) %>% as.numeric)  ~ paste0(issue_lon, "; Longitude format not recognized"),
+             TRUE ~ issue_lon),
+           
+           Longitude_clean = case_when(
+             is.na(long_clean) ~ NA_real_,
+             grepl("Invalid Longitude coordinate", issue_lon) ~ NA_real_,
+             grepl("Latitude entered instead of Longitude", issue_lon) ~ lat_clean %>% as.numeric,
+             grepl("Longitude invalid format: mix beteen DD and DMS", issue_lon) ~ parzer::parse_lon(gsub("E|\"|LON|LAT", "", long_clean)) %>% as.numeric,
+             grepl("Longitude format not recognized", issue_lon) ~ NA_real_,
+             TRUE ~ long_clean %>% as.numeric),
+           
+           issue_lat = case_when(
+             is.na(lat_clean) ~ paste0(issue_lat, "; No coordinates entered: follow-up"),
+             (lat_clean %>% as.numeric == 0) | (lat_clean %>% as.numeric %>% abs > 90) ~ paste0(issue_lat, "; Invalid Latitude coordinate"),
+             near(long_clean %>% as.numeric, lat_clean %>% as.numeric , tol = 0.2) ~ paste0(issue_lat, "; Longitude and Latitude almost equal"),
+             (lat_clean %>% as.numeric > 40) & (long_clean %>% as.numeric %>% abs < 180) &
+               (!near(lat_clean %>% as.numeric, long_clean %>% as.numeric , tol = 0.2)) ~ paste0(issue_lat, "; Longitude entered instead of Latitude"),
+             grepl("N|°|\"|LAT", lat_clean) & 
+               !is.na(parzer::parse_lat(gsub("LON|N|\"|LAT", "", lat_clean))) ~ paste0(issue_lat, "; Latitude invalid format: mix beteen DD and DMS"),
+             is.na(gsub("N|°|\"|LAT", "", lat_clean) %>% as.numeric)  ~ paste0(issue_lat, "; Latitude format not recognized"),
+             TRUE ~ issue_lat),
+           
+           Latitude_clean = case_when(
+             is.na(lat_clean) ~ NA_real_,
+             grepl("Invalid Latitude coordinate", issue_lat) ~ NA_real_,
+             grepl("Longitude entered instead of Latitude", issue_lat) ~ long_clean %>% as.numeric,
+             grepl("Latitude invalid format: mix beteen DD and DMS", issue_lat) ~ parzer::parse_lat(gsub("LON|N|\"|LAT", "", lat_clean)) %>% as.numeric,
+             grepl("Latitude format not recognized", issue_lat) ~ NA_real_,
+             TRUE ~ lat_clean %>% as.numeric),
+           issue.gps = ifelse((issue_lon!="") | (issue_lat!=""), paste0(issue_lon,"; ", issue_lat), ""),
+           issue.gps = gsub("^; ; |^; |; $| ;","", issue.gps)
+          )
+  return(df.temp)
+}
+
+clean.gps.old <- function(df, x, y){
+  df.temp <- df %>%
     mutate(issue_lon = case_when(
       is.na(!!sym(x)) ~ "No coordinates entered: follow-up",
-      !!sym(x) %>% as.numeric == 0 ~ "Invalid Longitude coordinate (0)",
+      (!!sym(x) %>% as.numeric == 0) | (!!sym(x) %>% as.numeric %>% abs > 180) ~ "Invalid Longitude coordinate",
       near(!!sym(x) %>% as.numeric, !!sym(y) %>% as.numeric , tol = 0.2) ~ "Longitude and Latitude almost equal",
-      (!!sym(x) %>% as.numeric < 20) & (!near(!!sym(x) %>% as.numeric, !!sym(y) %>% as.numeric , tol = 0.2)) ~ "Latitude entered instead of Longitude",
+      (!!sym(x) %>% as.numeric < 20) & (!!sym(y) %>% as.numeric < 90) &
+        (!near(!!sym(x) %>% as.numeric, !!sym(y) %>% as.numeric , tol = 0.2)) ~ "Latitude entered instead of Longitude",
       !!sym(x) %>% as.numeric > 80 ~ "Longitude not in Decimal Degree format",
       grepl("E", !!sym(x)) ~ "Longitude invalid format: mix beteen DD and DMS",
       grepl("°", !!sym(x)) & !is.na(gsub("°", "", !!sym(x)) %>% as.numeric)  ~ "Longitude invalid format: mix beteen DD and DMS",
       grepl("°|'", !!sym(x)) ~ "Longitude not in DD but in DMS",
-      grepl(",|-|\\/|\\\\", !!sym(x)) ~ "Longitude include invalid characters",
+      grepl(",|-|\\/|\\\\|،", !!sym(x)) ~ "Longitude include invalid characters",
       TRUE ~ ""),
       Longitude_clean = case_when(
-        issue_lon == "Invalid Longitude coordinate (0)" ~ NA_real_,
+        issue_lon == "Invalid Longitude coordinate" ~ NA_real_,
         issue_lon == "Latitude entered instead of Longitude" ~ !!sym(y) %>% as.numeric,
         issue_lon == "Longitude not in Decimal Degree format" ~ NA_real_,
         issue_lon == "Longitude invalid format: mix beteen DD and DMS" ~ gsub("E|?", "", gsub(" ", "", !!sym(x))) %>% as.numeric,
-        issue_lon == "Longitude not in DD but in DMS" ~ parzer::parse_lon(!!sym(x)) %>% as.numeric,
-        issue_lon == "Longitude include invalid characters" ~ gsub(",|-|\\/|\\\\| ", "", !!sym(x)) %>% as.numeric,
+        issue_lon == "Longitude not in DD but in DMS" ~ parzer::parse_lon(gsub("\"|E|LON", "", !!sym(x))) %>% as.numeric,
+        issue_lon == "Longitude include invalid characters" ~ gsub(",|-|\\/|\\\\| |،", "", !!sym(x)) %>% as.numeric,
         TRUE ~ !!sym(x) %>% arabic.tonumber %>% as.numeric),
       issue_lat = case_when(
         is.na(!!sym(y)) ~ "No coordinates entered: follow-up",
-        !!sym(y) %>% as.numeric == 0 ~ "Invalid Latitude coordinate (0)",
+        (!!sym(y) %>% as.numeric == 0) | (!!sym(y) %>% as.numeric %>% abs > 90) ~ "Invalid Latitude coordinate",
         near(!!sym(x) %>% as.numeric, !!sym(y) %>% as.numeric , tol = 0.2) ~ "Longitude and Latitude almost equal",
         !!sym(y) %>% as.numeric > 80 ~ "Latitude not in Decimal Degree format",
-        (!!sym(y) %>% as.numeric > 20) & (!near(!!sym(x) %>% as.numeric, !!sym(y) %>% as.numeric , tol = 0.2)) ~ "Longitude entered instead of Latitude",
+        (!!sym(y) %>% as.numeric > 20) & (!!sym(x) %>% as.numeric < 180) &
+          (!near(!!sym(x) %>% as.numeric, !!sym(y) %>% as.numeric , tol = 0.2)) ~ "Longitude entered instead of Latitude",
         grepl("N", !!sym(y)) ~ "Latitude invalid format: mix beteen DD and DMS",
         grepl("°", !!sym(y)) & !is.na(gsub("°", "", !!sym(x)) %>% as.numeric)  ~ "Latitude invalid format: mix beteen DD and DMS",
         grepl("°|'", !!sym(y)) ~ "Latitude not in DD but in DMS",
-        grepl(",|-|\\/|\\\\| ", !!sym(y)) ~ "Latitude include invalid characters",
+        grepl(",|-|\\/|\\\\| |،", !!sym(y)) ~ "Latitude include invalid characters",
         TRUE ~ ""),
       Latitude_clean = case_when(
-        issue_lat == "Invalid Latitude coordinate (0)" ~ NA_real_,
+        issue_lat == "Invalid Latitude coordinate" ~ NA_real_,
         issue_lat == "Latitude not in Decimal Degree format" ~ NA_real_,
         issue_lat == "Longitude entered instead of Latitude" ~ !!sym(x) %>% as.numeric,
         issue_lat == "Latitude invalid format: mix beteen DD and DMS" ~ gsub("N|?", "", gsub(" ", "", !!sym(y))) %>% as.numeric,
-        issue_lat == "Latitude not in DD but in DMS" ~ parzer::parse_lat(!!sym(y)) %>% as.numeric,
-        issue_lat == "Latitude include invalid characters" ~ gsub(",|-|\\/|\\\\| ", "", !!sym(y)) %>% as.numeric,
+        issue_lat == "Latitude not in DD but in DMS" ~ parzer::parse_lat(gsub("\"|N|LAT", "", !!sym(y))) %>% as.numeric,
+        issue_lat == "Latitude include invalid characters" ~ gsub(",|-|\\/|\\\\| |،", "", !!sym(y)) %>% as.numeric,
         TRUE ~ !!sym(y) %>% arabic.tonumber %>% as.numeric),
       issue.gps = ifelse((issue_lon!="") | (issue_lat!=""), paste0(issue_lon,", ", issue_lat), "")
     )
@@ -169,6 +203,51 @@ add.to.cleaning.log <- function(checks, check_id, question.names=c(), issue="", 
   }
 }
 
+save.org.name.follow.up <- function(cl, filename.out="output/test.xlsx"){
+  # save sitename follow-up requests
+  wb <- createWorkbook()
+  addWorksheet(wb, "Follow-up")
+  writeData(wb = wb, x = cl, sheet = "Follow-up", startRow = 1)
+  
+  style.col.color <- createStyle(fgFill="#E5FFCC", border="TopBottomLeftRight", borderColour="#000000")
+  style.col.color.first <- createStyle(textDecoration="bold", fgFill="#E5FFCC",
+                                       border="TopBottomLeftRight", borderColour="#000000", wrapText=F)
+  
+  addStyle(wb, "Follow-up", style = style.col.color, rows = 1:(nrow(cl)+1), cols=4)
+  addStyle(wb, "Follow-up", style = style.col.color, rows = 1:(nrow(cl)+1), cols=5)
+  col.style <- createStyle(textDecoration="bold", fgFill="#CECECE", halign="left",
+                           border="TopBottomLeftRight", borderColour="#000000")
+  
+  setColWidths(wb, "Follow-up", cols=1, widths=35)
+  setColWidths(wb, "Follow-up", cols=2, widths=8)
+  setColWidths(wb, "Follow-up", cols=3, widths=8)
+  setColWidths(wb, "Follow-up", cols=4, widths=30)
+  setColWidths(wb, "Follow-up", cols=5, widths=20)
+  setColWidths(wb, "Follow-up", cols=6:8, widths=10)
+  setColWidths(wb, "Follow-up", cols=8, widths=7)
+  setColWidths(wb, "Follow-up", cols=9, widths=5)
+  setColWidths(wb, "Follow-up", cols=(10:11), widths=30)
+  setColWidths(wb, "Follow-up", cols=12:18, widths=15)
+  
+  addStyle(wb, "Follow-up", style = createStyle(wrapText=T), rows = 1:(ncol(cl)+1), cols=6)
+  addStyle(wb, "Follow-up", style = createStyle(wrapText=T), rows = 1:(ncol(cl)+1), cols=7)
+  addStyle(wb, "Follow-up", style = col.style, rows = 1, cols=1:dim(cl)[2])
+  addStyle(wb, "Follow-up", style = style.col.color.first, rows = 1, cols=4)
+  addStyle(wb, "Follow-up", style = style.col.color.first, rows = 1, cols=5)
+  
+  col.id <- which(colnames(cl) %in% c("ngo_code_partial_match"))
+  random.color <- ""
+  for (r in 2:nrow(cl)){
+    if(as.character(cl[r, "uuid"])==as.character(cl[r-1, "uuid"])){
+      if (random.color == "") random.color <- randomColor(1, luminosity = "light")
+      addStyle(wb, "Follow-up", style = createStyle(fgFill=random.color, wrapText=F), 
+               rows = r:(r+1), cols=col.id)
+    } else random.color=""
+  }
+  
+  saveWorkbook(wb, filename.out, overwrite = TRUE)
+} 
+
 save.sitename.follow.up <- function(cl, filename.out="output/test.xlsx"){
   # save sitename follow-up requests
   wb <- createWorkbook()
@@ -231,7 +310,7 @@ get.col.range <- function(variable){
   alphabet <- c(LETTERS, do.call('paste0',all))
   col.excel <- alphabet[column.number]
   nrow <- nrow(data.val %>% filter(!is.na(!!sym(variable))))
-  range.vect <- c("$", col.excel, "$2:$", col.excel, "$", (nrow+2))             ## nrow + 2 => to keep an additionnal field in drop down list to be updated if needed by partner // if you want to keep it strict, nrow + 1
+  range.vect <- c("$", col.excel, "$2:$", col.excel, "$", (nrow + 1))             ## if nrow + 2 => will keep an additionnal field in drop down list to be updated if needed by partner
   range <- paste(range.vect, sep="", collapse="")
   value.sheet <- paste("'Choices validation'!")
   value <- paste(value.sheet, range, sep="", collapse="")
@@ -254,17 +333,18 @@ save.follow.up.requests <- function(cl, filename.out="output/test.xlsx"){
   
   addStyle(wb, "Follow-up", style = style.col.color, rows = 1:(nrow(cl)+1), cols=4)
   addStyle(wb, "Follow-up", style = style.col.color, rows = 1:(nrow(cl)+1), cols=5)
-  col.style <- createStyle(textDecoration="bold", fgFill="#CECECE",halign="center",
+  col.style <- createStyle(textDecoration="bold", fgFill="#CECECE", halign="center",
                            border="TopBottomLeftRight", borderColour="#000000")
   
   setColWidths(wb, "Follow-up", cols=1, widths=20)
   setColWidths(wb, "Follow-up", cols=2, widths=15)
   setColWidths(wb, "Follow-up", cols=3, widths=15)
-  setColWidths(wb, "Follow-up", cols=c(4,9), widths="auto")
+  setColWidths(wb, "Follow-up", cols=c(4), widths="auto")
   setColWidths(wb, "Follow-up", cols=5, widths=60)
   setColWidths(wb, "Follow-up", cols=6, widths=15)
   setColWidths(wb, "Follow-up", cols=7, widths=15)
-  setColWidths(wb, "Follow-up", cols=8, widths=30)
+  setColWidths(wb, "Follow-up", cols=8, widths=8)
+  setColWidths(wb, "Follow-up", cols=9, widths=20)
   setColWidths(wb, "Follow-up", cols=10, widths=15)
   
   addStyle(wb, "Follow-up", style = createStyle(wrapText=T), rows = 1:(ncol(cl)+1), cols=6)
@@ -275,14 +355,14 @@ save.follow.up.requests <- function(cl, filename.out="output/test.xlsx"){
   
   col.id <- which(colnames(cl)=="old_value")
   random.color <- ""
-  for (r in 2:nrow(cl)){
+  if (nrow(cl)>1) {for (r in 2:nrow(cl)){
     if(as.character(cl[r, "uuid"])==as.character(cl[r-1, "uuid"]) & 
        as.character(cl[r, "check_id"])==as.character(cl[r-1, "check_id"])){
       if (random.color == "") random.color <- randomColor(1, luminosity = "light")
       addStyle(wb, "Follow-up", style = createStyle(fgFill=random.color, wrapText=T), 
                rows = r:(r+1), cols=col.id)
     } else random.color=""
-  }
+  }}
   
   for (r in 1:nrow(cl)){
     if (cl[r,"variable"] %in% colnames(data.val)){
@@ -293,6 +373,32 @@ save.follow.up.requests <- function(cl, filename.out="output/test.xlsx"){
   }
   saveWorkbook(wb, filename.out, overwrite = TRUE)
 } 
+
+save.new.sites <- function(filename.out="output/test.xlsx") {
+  wb <- createWorkbook()
+  addWorksheet(wb, "New sites")
+  writeData(wb = wb, x = new.sites, sheet = "New sites", startRow = 1)
+  style.col.color <- createStyle(fgFill="#E5FFCC", border="TopBottomLeftRight", borderColour="#000000")
+  style.col.color.first <- createStyle(textDecoration="bold", fgFill="steelblue1", border="TopBottomLeftRight", borderColour="#000000", wrapText=F)
+  col.style <- createStyle(textDecoration="bold", fgFill="#CECECE", halign="center", border="TopBottomLeftRight", borderColour="#000000")
+  
+  addStyle(wb, "New sites", style = col.style, rows = 1, cols=1:ncol(new.sites))
+  addStyle(wb, "New sites", style = style.col.color.first, rows = 2:(nrow(new.sites)+1), cols=5)
+  addStyle(wb, "New sites", style = style.col.color, rows = 2:(nrow(new.sites)+1), cols=6)
+  addStyle(wb, "New sites", style = style.col.color, rows = 2:(nrow(new.sites)+1), cols=7)
+  
+  setColWidths(wb, "New sites", cols=1, widths=20)
+  setColWidths(wb, "New sites", cols=2, widths=7)
+  setColWidths(wb, "New sites", cols=3, widths=7)
+  setColWidths(wb, "New sites", cols=4, widths=55)
+  setColWidths(wb, "New sites", cols=5, widths=20)
+  setColWidths(wb, "New sites", cols=6, widths=20)
+  setColWidths(wb, "New sites", cols=7, widths=20)
+  setColWidths(wb, "New sites", cols=8:ncol(new.sites), widths=10)
+  
+  saveWorkbook(wb, filename.out, overwrite = TRUE)
+  
+}
 
 get.ref.question <- function(x){
   x.1 <- str_split(x, "\\{")[[1]][2]
@@ -420,7 +526,8 @@ get.old.value.label <- function(cl){
 arabic.tonumber <- function(s){
   arabic <- c("\u0660\u0661\u0662\u0663\u0664\u0665\u0666\u0667\u0668\u0669\u06F0\u06F1\u06F2\u06F3\u06F4\u06F5\u06F6\u06F7\u06F8\u06F9")
   english <- c("01234567890123456789")
-  res <- as.numeric(chartr(arabic,english,s))
+  suppressWarnings(res.int <- as.numeric(chartr(arabic,english,s)))
+  if (is.na(res.int)){res <- s} else {res <- res.int}
   return(res)
 }
 
@@ -540,47 +647,6 @@ partial_join_old <- function(x, y, pattern_x, by_y){
   return(df)
 }
 
-clean.gps.old <- function(df,x,y){
-  df.temp<-df %>%
-    mutate(issue_lon = case_when(
-      is.na(!!sym(x)) ~ "No coordinates entered: follow-up",
-      near(!!sym(x) %>% as.numeric, !!sym(y) %>% as.numeric , tol = 0.2) ~ "Longitude and Latitude almost equal",
-      !!sym(x) %>% as.numeric == 0 ~ "Invalid Longitude coordinate (0)",
-      (!!sym(x) %>% as.numeric < 20) & (!near(!!sym(x) %>% as.numeric, !!sym(y) %>% as.numeric , tol = 0.2)) ~ "Latitude entered instead of Longitude",
-      !!sym(x) %>% as.numeric > 80 ~ "Longitude not in Decimal Degree format",
-      grepl("E", !!sym(x)) ~ "Longitude invalid format: mix beteen DD and DMS",
-      grepl("°", !!sym(x)) & !is.na(gsub("°", "", !!sym(x)) %>% as.numeric)  ~ "Longitude invalid format: mix beteen DD and DMS",
-      grepl("°|'", !!sym(x)) ~ "Longitude not in DD but in DMS",
-      TRUE ~ ""),
-      Longitude_clean = case_when(
-        issue_lon == "Invalid Longitude coordinate (0)" ~ NA_real_,
-        issue_lon == "Latitude entered instead of Longitude" ~ !!sym(y) %>% as.numeric,
-        issue_lon == "Longitude not in Decimal Degree format" ~ NA_real_,
-        issue_lon == "Longitude invalid format: mix beteen DD and DMS" ~ gsub("E", "", gsub(" ", "", !!sym(x))) %>% as.numeric,
-        issue_lon == "Longitude not in DD but in DMS" ~ parzer::parse_lon(!!sym(x)) %>% as.numeric,
-        TRUE ~ !!sym(x) %>% as.numeric),
-      issue_lat = case_when(
-        is.na(!!sym(y)) ~ "No coordinates entered: follow-up",
-        near(!!sym(x) %>% as.numeric, !!sym(y) %>% as.numeric , tol = 0.2) ~ "Longitude and Latitude almost equal",
-        !!sym(y) %>% as.numeric == 0 ~ "Invalid Latitude coordinate (0)",
-        !!sym(y) %>% as.numeric > 80 ~ "Latitude not in Decimal Degree format",
-        (!!sym(y) %>% as.numeric > 20) & (!near(!!sym(x) %>% as.numeric, !!sym(y) %>% as.numeric , tol = 0.2)) ~ "Longitude entered instead of Latitude",
-        grepl("N", !!sym(y)) ~ "Latitude invalid format: mix beteen DD and DMS",
-        grepl("°", !!sym(y)) & !is.na(gsub("°", "", !!sym(x)) %>% as.numeric)  ~ "Latitude invalid format: mix beteen DD and DMS",
-        grepl("°|'", !!sym(y)) ~ "Latitude not in DD but in DMS",
-        TRUE ~ ""),
-      Latitude_clean = case_when(
-        issue_lat == "Invalid Latitude coordinate (0)" ~ NA_real_,
-        issue_lat == "Latitude not in Decimal Degree format" ~ NA_real_,
-        issue_lat == "Longitude entered instead of Latitude" ~ !!sym(x) %>% as.numeric,
-        issue_lat == "Latitude invalid format: mix beteen DD and DMS" ~ gsub("N", "", gsub(" ", "", !!sym(y))) %>% as.numeric,
-        issue_lat == "Latitude not in DD but in DMS" ~ parzer::parse_lat(!!sym(y)) %>% as.numeric,
-        TRUE ~ !!sym(y) %>% as.numeric),
-      issue.gps = ifelse((issue_lon!="") |  (issue_lat!=""), paste0(issue_lon," - ", issue_lat), NA)
-    )
-  return(df.temp)
-}
-
 ## save.workbook cleaning log archive
 
 # 
@@ -658,14 +724,13 @@ clean.gps.old <- function(df,x,y){
 #   }
 # }
 
-
-## adequacy log [multiple columns format]
-# priority.need.checks.old <- function(df, check=""){
+# Priority need checks old version [archived because it was taking forever and written with my feet]
+# priority.need.checks.old <- function(df){
 #   col.priority.needs <- c("i1_top_priority_need", "i2_second_priority_need", "i3_third_priority_need")
-#   service.level.var = df %>% select(c("shelter_maintenance_services":"waste_disposal_services")) %>% colnames
-#   priority.need = c("shelter_maintenance_assistance", "non_food_items", "food", "cash_assistance", 
-#                     "water", "medical_assistance", "education", "livelihood_assistance",
-#                     "protection_services", "nutrition_services", "sanitation_services")
+#   service.level.var <- df %>% select(c("shelter_maintenance_services":"waste_disposal_services")) %>% colnames
+#   priority.need <- c("shelter_maintenance_assistance", "non_food_items", "food", "cash_assistance", 
+#                      "water", "medical_assistance", "education", "livelihood_assistance",
+#                      "protection_services", "nutrition_services", "sanitation_services")
 #   logical.inconsistencies <- data.frame(service.level.var, priority.need)                               # Enable calling conditions between service question header and corresponding priority need choice 
 #   for (var in service.level.var) {
 #     check.col <- paste0(var, "_check")
@@ -678,7 +743,7 @@ clean.gps.old <- function(df,x,y){
 #              !!issue.check.col := ifelse(!!sym(check.col) == 1,
 #                                          paste0(var, " reported as adequate but ", logical.inconsistencies[logical.inconsistencies$service.level.var==var, "priority.need"], " cited as top three priority need. To be checked."), ""))    
 #   }
-#   df<-df %>% select("uuid", "q0_3_organization", "a4_site_name", all_of(c(col.priority.needs,service.level.var)), matches("_issue|_check"), -rrm_distributions)
+#   df <- df %>% select("uuid", "q0_3_organization", "a4_site_name", all_of(c(col.priority.needs,service.level.var)), matches("_issue|_check"), -rrm_distributions)
 #   list.checks <- colnames(df)[grepl("_check", colnames(df))]
 #   df.long <- data.frame()
 #   for (i in seq_len(nrow(df))) {
@@ -690,30 +755,24 @@ clean.gps.old <- function(df,x,y){
 #         variable = gsub("_check", "", col),
 #         old_value = df[i, gsub("_check", "", col)],
 #         has.issue = df[i, col],
-#         issue_type = df[i, gsub("_check", "_issue", col)],
-#         conflicting_variable = conflicting_variable,
-#         conflicting_variable_old_value = conflicting_variable_old_value
+#         issue = df[i, gsub("_check", "_issue", col)])
+#       ) %>% rbind(data.frame(
+#         df[i,c("uuid", "q0_3_organization", "a4_site_name")],
+#         variable = conflicting_variable,
+#         old_value = conflicting_variable_old_value,
+#         has.issue = df[i, col],
+#         issue = df[i, gsub("_check", "_issue", col)]
 #       )
 #       )
 #     }
 #   }
-#   adequacy.log <- df.long %>%                                                                           # Creating adequacy cleaning log
-#     filter(has.issue==1) %>% 
-#     ungroup() %>%
-#     mutate(uuid = uuid,
-#            agency = q0_3_organization, 
-#            area = a4_site_name3, 
-#            variable = var, 
-#            issue = issue_type, 
-#            old_value = old_value, 
-#            new_value = " ",
-#            fix="Checked with partner",
-#            checked_by="ON",
-#            conflicting_variable=conflicting_variable,
-#            conflicting_variable_old_value=conflicting_variable_old_value,
-#            conflicting_variable_new_value="" ) %>% 
-#     select(uuid, agency, area, variable, issue, old_value, new_value, fix, checked_by,conflicting_variable, conflicting_variable_old_value, conflicting_variable_new_value)
-#   return(adequacy.log)
+#   res <- df.long %>%
+#     filter(has.issue==1) %>%
+#     mutate(new_value = "",fix="Checked with partner", checked_by="ON", 
+#            check_id = paste0(lapply(issue, function(x) str_split(x, " ")[[1]][1]), "_priority_need_check")) %>%
+#     dplyr::rename(agency=q0_3_organization, area=a4_site_name) %>%
+#     dplyr::select(uuid, agency, area, variable, issue, check_id, old_value, new_value, fix, checked_by)
+#   return(res)
 # }
 
 ## phone number check [was not efficient and needed calling colnames manually ]
