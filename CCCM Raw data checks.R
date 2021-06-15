@@ -261,7 +261,7 @@ sitename_log_final <- sitename_log_updated %>%
 cleaning.log <- cleaning.log %>% bind_rows(sitename_log_final)
 
 ## Check 3: Match q3 organization other names with kobo list
-## A. Do a partial match for Partner name in arabic from the external choice list
+## 3.1. Do a partial match for Partner name in arabic from the external choice list
 choices.ngo <- choices %>% filter(list_name == "ngo") %>% select(-governorate, -list_name) %>% setNames(c("ngo_code", "ngo_name_en", "ngo_name_ar"))
 check_ngo_names <- response %>%
   mutate(org_other_lower = q0_3_organization_other %>% tolower, .before =1) %>%
@@ -281,10 +281,10 @@ check_ngo_names <- response %>%
   
 ngo_log <- check_ngo_names %>% select(uuid, matches("organization"), matches("_partial_code"), matches("a4_"), everything()) %>%
   arrange(uuid, ngo_code_match_other_partial_code) %>% filter(flag) %>%
-  mutate(q0_3_organization_new_code = ifelse(!is.na(ngo_code_match_other), ngo_code_match_other, NA),
-         q0_3_organization_new_name_en = ifelse(!is.na(ngo_name_en_match_other), ngo_name_en_match_other, NA),
-         q0_3_organization_new_name_ar = ifelse(!is.na(ngo_name_ar_match_other), ngo_name_ar_match_other, NA),
-         keep = NA, .after = "q0_3_organization_other") %>%
+  mutate(q0_3_organization_new_code = ifelse(!is.na(ngo_code_match_other), ngo_code_match_other, ""),
+         q0_3_organization_new_name_en = ifelse(!is.na(ngo_name_en_match_other), ngo_name_en_match_other, ""),
+         q0_3_organization_new_name_ar = ifelse(!is.na(ngo_name_ar_match_other), ngo_name_ar_match_other, ""),
+         keep = "", new_org="", .after = "q0_3_organization_other") %>%
   dplyr::rename(ngo_code_partial_match=ngo_code_match_other_partial_code,
                 ngo_name_en_partial_match=ngo_name_en_match_other_partial_code,
                 ngo_name_ar_partial_match=ngo_name_ar_match_other_partial_code,
@@ -305,7 +305,7 @@ browseURL(paste0("output/cleaning log/organisation name/org_name_log_", today, "
 
 ################################################################################
 
-ngo.filename.updated <- "output/cleaning log/organisation name/org_name_log_2021-06-10_updated.xlsx"
+ngo.filename.updated <- "output/cleaning log/organisation name/org_name_log_2021-06-15_updated.xlsx"
 ngo_log_updated <- read.xlsx(ngo.filename.updated)
 
 # Make sure we filtered out duplicate partial matches
@@ -317,6 +317,14 @@ ngo_log_updated <- ngo_log_updated %>%
 if ((test<-nrow(ngo_log_updated %>% filter(n>1)))>0) {
   stop(paste0("There are ", test," remaining duplicate partial matches in organisation name log! \n\nOpen the updated cleaning log file and filter them out either by deleting the non relevant matches or by setting keep column to TRUE for relevant matches"))}
 remaining.dup.org <- ngo_log_updated %>% filter(n>1)
+
+## Highlight new organizations
+new_ngos <- ngo_log_updated %>% filter(new_org=="TRUE") %>%
+  mutate(issue=paste0("Marked as 'other' because it is a new partner. New code attributed is ", q0_3_organization_new_code))
+new.ngos.uuid <- new_ngos$uuid
+
+## Update organisation log to reflect new oganisation with different "issue"
+ngo_log_final <- ngo_log_updated %>% filter(!uuid %in% new.ngos.uuid) %>% bind_rows(new_ngos)
 
 ## Apply changes to sitename column a4_site_name according to Partner's feedback.
 ## Question: do we need to update the new name en and ar in response or useless?
@@ -451,14 +459,25 @@ df.adm2 <- adm2 %>% st_join(response.with.gps %>% st_as_sf() %>%
 df.adm_loc <- response.with.gps %>% filter(!is.na(issue.gps)) %>% st_as_sf()
 pal.adm2 <- function(x) return(ifelse(x!=0, "indianred", "ghostwhite"))
 
+icon.blue <- makeAwesomeIcon(icon= 'flag', markerColor = 'blue', iconColor = 'black')
+icon.red <- makeAwesomeIcon(icon = 'flag', markerColor = 'red', library='fa', iconColor = 'black')
+
 map <- leaflet() %>%
   addPolygons(data=df.adm2, color = "#B5B5B5", weight = 2, opacity = 0.5,
               highlightOptions = highlightOptions(color = "white", weight = 2), fillOpacity = 0.5,
               fillColor = ~pal.adm2(df.adm2$has.gps.issue),
               label = df.adm2$admin2Name_en) %>%
-  addMarkers(data = df.adm_loc, 
-             label = paste0("Site name: ", df.adm_loc$a4_site_name," - The admin name entered in dataset is ", df.adm_loc$admin3Name_en_df, ",\r\nactual district according to GPS location is: ", df.adm_loc$admin3Name_en)) %>%
-  addTiles()
+  addAwesomeMarkers(data = df.adm_loc, group = "All", icon = icon.blue,
+                    label = paste0("Site name: ", df.adm_loc$a4_site_name," - Actual sub-district according to GPS location is: ", df.adm_loc$admin3Name_en)) %>%
+  addAwesomeMarkers(data = df.adm_loc %>% filter(admin3Name_en_df!=admin3Name_en), group = "Non matching GPS", icon = icon.red,
+                    label = paste0("Site name: ", df.adm_loc$a4_site_name," - The admin name entered in dataset is ", df.adm_loc$admin3Name_en_df, ",\r\nactual sub-district according to GPS location is: ", df.adm_loc$admin3Name_en)) %>%
+  # addMarkers(data = df.adm_loc, group = "All",
+  #            label = paste0("Site name: ", df.adm_loc$a4_site_name," - The admin name entered in dataset is ", df.adm_loc$admin3Name_en_df, ",\r\nactual district according to GPS location is: ", df.adm_loc$admin3Name_en)) %>%
+  # addMarkers(data = df.adm_loc %>% filter(admin3Name_en_df!=admin3Name_en), group = "Non matching GPS",
+  #            label = paste0("Site name: ", df.adm_loc$a4_site_name," - The admin name entered in dataset is ", df.adm_loc$admin3Name_en_df, ",\r\nactual district according to GPS location is: ", df.adm_loc$admin3Name_en)) %>%
+  addTiles() %>% 
+  addLayersControl(overlayGroups = c("All", "Non matching"),
+    options = layersControlOptions(collapsed = FALSE))
 
 map                                                                             # Display map
 # withr::with_dir("./output/", map %>% mapshot(url="sitemap_cleaned_gps.html"))    # Export map as html file // uncomment if you want it as html, but it takes a while so commented so far
