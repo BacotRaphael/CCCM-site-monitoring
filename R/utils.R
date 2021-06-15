@@ -1,5 +1,38 @@
 # Cleaning functions
 
+## Numerical outlier 
+detect.outliers <- function(df, method="sd-linear", n.sd=3, n.iqr=3){
+  res <- data.frame()
+  for (col in colnames(df)[colnames(df)!="uuid"]){
+    df.temp <- data.frame(uuid=df$uuid, value=as.numeric(df[[col]])) %>% filter(!is.na(value) & value>0)
+    if (method=="sd-linear"){
+      df.temp <- df.temp %>%
+        mutate(is.outlier=ifelse(value > mean(value, na.rm=T) + n.sd*sd(value, na.rm=T) | 
+                                   value < mean(value, na.rm=T) - n.sd*sd(value, na.rm=T), T, F))
+      } else if (method=="iqr-linear") {
+      df.temp <- df.temp %>%
+        mutate(col=value,
+               is.outlier=ifelse(col > quantile(col, 0.75) + n.iqr*IQR(col) |
+                                   col < quantile(col, 0.25) - n.iqr*IQR(col), T, F))
+      } else if (method=="sd-log"){
+      df.temp <- df.temp %>%
+        mutate(col.log=log(value),
+               is.outlier=ifelse(col.log > mean(col.log, na.rm=T) + n.sd*sd(col.log, na.rm=T) | 
+                                   col.log < mean(col.log, na.rm=T) - n.sd*sd(col.log, na.rm=T), T, F))
+      } else if (method=="iqr-log") {
+        df.temp <- df.temp %>%
+          mutate(col.log=log(value),
+                 is.outlier=ifelse(col.log > quantile(col.log, 0.75) + n.iqr*IQR(col.log) |
+                                     col.log < quantile(col.log, 0.25) - n.iqr*IQR(col.log), T, F))
+        } else stop("Method unknown")
+    df.temp <- filter(df.temp, is.outlier) %>% 
+      mutate(variable=col, old_value=value) %>%
+      select(uuid, variable, old_value)
+    res <- rbind(res, df.temp)
+  }
+  return(res)
+}
+
 ## Priority needs check
 priority.check <- function(df, var){
   df <- df %>% 
@@ -115,14 +148,14 @@ add.to.cleaning.log <- function(checks, check_id, question.names=c(), issue="", 
   if (nrow(checks)>0){
     for(q.n in question.names){
       new.entries <- checks %>% filter(flag) %>% 
-        mutate(uuid=uuid,
-               variable=q.n,
-               issue=issue,
-               check_id=check_id,
+        mutate(uuid=uuid %>% as.character,
+               variable=q.n %>% as.character,
+               issue=issue %>% as.character,
+               check_id=check_id %>% as.character,
                old_value=!!sym(q.n) %>% as.character,
-               new_value=new.value,
-               fix=fix,
-               checked_by=checked_by)
+               new_value=new.value %>% as.character,
+               fix=fix %>% as.character,
+               checked_by= checked_by %>% as.character)
       new.entries <- new.entries %>% select(all_of(col.cl), any_of(add.col))
       df <- bind_rows(df, new.entries)
     }
@@ -196,13 +229,14 @@ save.sitename.follow.up <- function(cl, filename.out="output/test.xlsx"){
   setColWidths(wb, "Follow-up", cols=4, widths=31)
   setColWidths(wb, "Follow-up", cols=5, widths=20)
   setColWidths(wb, "Follow-up", cols=6, widths=15)
-  setColWidths(wb, "Follow-up", cols=7, widths=7)
-  setColWidths(wb, "Follow-up", cols=c(8:9), widths=15)
-  setColWidths(wb, "Follow-up", cols=(10:15), widths=15)
-  setColWidths(wb, "Follow-up", cols=16:18, widths=25)
+  setColWidths(wb, "Follow-up", cols=7, widths=5)
+  setColWidths(wb, "Follow-up", cols=8, widths=8)
+  setColWidths(wb, "Follow-up", cols=c(9:10), widths=15)
+  setColWidths(wb, "Follow-up", cols=(11:16), widths=15)
+  setColWidths(wb, "Follow-up", cols=17:19, widths=25)
   
-  addStyle(wb, "Follow-up", style = createStyle(wrapText=T), rows = 1:(ncol(cl)+1), cols=6)
-  addStyle(wb, "Follow-up", style = createStyle(wrapText=T), rows = 1:(ncol(cl)+1), cols=7)
+  # addStyle(wb, "Follow-up", style = createStyle(wrapText=T), rows = 1:(ncol(cl)+1), cols=8)
+  # addStyle(wb, "Follow-up", style = createStyle(wrapText=T), rows = 1:(ncol(cl)+1), cols=9)
   addStyle(wb, "Follow-up", style = col.style, rows = 1, cols=1:dim(cl)[2])
   addStyle(wb, "Follow-up", style = style.col.color.first, rows = 1, cols=4)
   addStyle(wb, "Follow-up", style = style.col.color.first, rows = 1, cols=5)
@@ -301,18 +335,18 @@ save.follow.up.requests <- function(cl, filename.out="output/test.xlsx"){
   saveWorkbook(wb, filename.out, overwrite = TRUE)
 } 
 
-save.new.sites <- function(filename.out="output/test.xlsx") {
+save.new.sites <- function(cl, filename.out="output/test.xlsx") {
   wb <- createWorkbook()
   addWorksheet(wb, "New sites")
-  writeData(wb = wb, x = new.sites, sheet = "New sites", startRow = 1)
+  writeData(wb = wb, x = cl, sheet = "New sites", startRow = 1)
   style.col.color <- createStyle(fgFill="#E5FFCC", border="TopBottomLeftRight", borderColour="#000000")
   style.col.color.first <- createStyle(textDecoration="bold", fgFill="steelblue1", border="TopBottomLeftRight", borderColour="#000000", wrapText=F)
   col.style <- createStyle(textDecoration="bold", fgFill="#CECECE", halign="center", border="TopBottomLeftRight", borderColour="#000000")
   
-  addStyle(wb, "New sites", style = col.style, rows = 1, cols=1:ncol(new.sites))
-  addStyle(wb, "New sites", style = style.col.color.first, rows = 2:(nrow(new.sites)+1), cols=5)
-  addStyle(wb, "New sites", style = style.col.color, rows = 2:(nrow(new.sites)+1), cols=6)
-  addStyle(wb, "New sites", style = style.col.color, rows = 2:(nrow(new.sites)+1), cols=7)
+  addStyle(wb, "New sites", style = col.style, rows = 1, cols=1:ncol(cl))
+  addStyle(wb, "New sites", style = style.col.color.first, rows = 2:(nrow(cl)+1), cols=9)
+  addStyle(wb, "New sites", style = style.col.color, rows = 2:(nrow(cl)+1), cols=10)
+  addStyle(wb, "New sites", style = style.col.color, rows = 2:(nrow(cl)+1), cols=11)
   
   setColWidths(wb, "New sites", cols=1, widths=20)
   setColWidths(wb, "New sites", cols=2, widths=7)
@@ -320,8 +354,11 @@ save.new.sites <- function(filename.out="output/test.xlsx") {
   setColWidths(wb, "New sites", cols=4, widths=55)
   setColWidths(wb, "New sites", cols=5, widths=20)
   setColWidths(wb, "New sites", cols=6, widths=20)
-  setColWidths(wb, "New sites", cols=7, widths=20)
-  setColWidths(wb, "New sites", cols=8:ncol(new.sites), widths=10)
+  setColWidths(wb, "New sites", cols=7, widths=5)
+  setColWidths(wb, "New sites", cols=8, widths=8)
+  setColWidths(wb, "New sites", cols=9, widths=15)
+  setColWidths(wb, "New sites", cols=10:11, widths=20)
+  setColWidths(wb, "New sites", cols=12:ncol(cl), widths=10)
   
   saveWorkbook(wb, filename.out, overwrite = TRUE)
   

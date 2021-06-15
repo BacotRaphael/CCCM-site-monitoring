@@ -1,7 +1,7 @@
 # CCCM Site Monitoring Tool - Data Cleaning script
 # REACH Yemen - raphael.bacot@reach-initiative.org
 # V6
-# 14/06/2021
+# 15/06/2021
 
 rm(list=ls())
 setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
@@ -63,16 +63,22 @@ response <- if (tool.version == "V1") {read.xlsx(rawdata.filename.v1)} else if (
 response <- response %>% mutate(a4_site_name = a4_other_site, id = 1:n(), .before = "deviceid") %>%
   dplyr::rename(index = '_index', uuid = '_uuid')
 
-## Upload updated cleaning log file
+## Upload updated cleaning log file from partners
 files.cleaning.log <- paste0("output/cleaning log/partners updated/", list.files("output/cleaning log/partners updated"))
 cleaning.log <- data.frame()
 for (file in files.cleaning.log){
   cleaning.log <- bind_rows(cleaning.log, read.xlsx(file) %>% mutate_all(as.character))
 }
+
+## Upload internal cleaning log [sitename/organisation name and check kobo tool]
+file.cleaning.log.internal <- "output/cleaning log/cleaning_log_int_all_2021-06-15.xlsx"
+cleaning.log.int <- read.xlsx(file.cleaning.log.internal) %>% mutate_all(as.character)
+cleaning.log <- cleaning.log %>% bind_rows(cleaning.log.int)
+
 if ((cleaning.log %>% group_by(uuid, variable) %>% filter(n()>1) %>% nrow) > 0) {print("There are duplicates entries (or multiple entries for the same variable) in the cleaning log. Make sure it's ok and that there are no conflicting new_values assigned.")}
 duplicate.cl <- cleaning.log %>% group_by(uuid, variable) %>% filter(n()>1) %>% ungroup %>% arrange(uuid, variable)
 
-### Apply cleaning log changes to response file
+### Apply cleaning log changes to raw response file
 clean_data <- response
 for (n in seq_along(1:nrow(cleaning.log))){
   col <- cleaning.log %>% slice(n) %>% pull(variable)                                                 # Get the name of the variable to be updated in response dataset
@@ -84,7 +90,21 @@ for (n in seq_along(1:nrow(cleaning.log))){
   }
 }
 
-### Rename all variables for the dashboard and save file 
+## Now that response is cleaned, update the masterlist with new sites entries + ID and available informations (long/lat cleaned)
+# file.site.name.log <- "output/cleaning log/site name/site_name_log_2021-06-15_final.xlsx"
+# site_name_log_final <- read.xlsx(file.site.name.log)
+new_sites_master <- cleaning.log %>%
+  filter(variable == "a4_site_name") %>%
+  filter(new_site %in% c("TRUE", "T", TRUE, T)) %>%
+  left_join(response %>% select(uuid, a7_site_population_hh, a7_site_population_individual, a3_sub_district, a5_1_gps_longitude, a5_2_gps_latitude), by="uuid") %>%
+  mutate(Partner_Name = agency, Sub_Dist_ID=a3_sub_district, Site_ID = new_value, Site_Name=a4_site_name_new_en,
+         Site_Name_In_Arabic=a4_site_name_new_ar, Longitude=a5_1_gps_longitude, Latitude=a5_2_gps_latitude,"#_of_total_Households"=as.numeric(a7_site_population_hh),
+         Total_Site_Population=as.numeric(a7_site_population_individual)) %>% select(intersect(colnames(.), colnames(masterlist)))
+
+## Adding the new sites in the existing site masterlist
+masterlist_updated <- masterlist %>% bind_rows(new_sites_master)                
+dir.create("output/masterlist", showWarnings = F)
+masterlist_updated %>% select(-any_of("Site_Name_In_Arabic_tidy")) %>% write.xlsx(paste0("output/masterlist/masterlist_", today,".xlsx"))
 
 ## Add Pcodes
 admin3 <- read.xlsx(filename.pcodes, sheet = "admin3") %>%
