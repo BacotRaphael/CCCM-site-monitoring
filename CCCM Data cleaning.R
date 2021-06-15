@@ -37,6 +37,9 @@ filename.pcodes <- "R/pcodes/yem_admin_ochayemen_20191002.xlsx"
 # colv1 <- colnames(responsev1)
 # colv2 <- colnames(responsev2)
 # col.all <- unique(colv1, colv2)
+# common.col <- intersect(colv1, colv2)
+# col.v1.only <- setdiff(colv1, colv2) 
+# col.v2.only <- setdiff(colv2, colv1)
 
 ## Load survey questions from kobo tool
 tool <- if (tool.version == "V1") {read.xlsx(tool.filename.v1, sheet = "survey")} else if(tool.version == "V2") {read.xlsx(tool.filename.v2, sheet = "survey")} else {print("invalid tool entered, should be either V1 or V2")}
@@ -91,8 +94,7 @@ for (n in seq_along(1:nrow(cleaning.log))){
 }
 
 ## Now that response is cleaned, update the masterlist with new sites entries + ID and available informations (long/lat cleaned)
-# file.site.name.log <- "output/cleaning log/site name/site_name_log_2021-06-15_final.xlsx"
-# site_name_log_final <- read.xlsx(file.site.name.log)
+
 new_sites_master <- cleaning.log %>%
   filter(variable == "a4_site_name") %>%
   filter(new_site %in% c("TRUE", "T", TRUE, T)) %>%
@@ -136,7 +138,6 @@ final_dataset_external <- clean_data %>% select(-c("start", "end", "q0_1_enumera
                                                    "q0_3_organization_other", "a4_other_site", "a5_1_gps_longitude", "a5_2_gps_latitude", "b2_exu_fp_name", "b2_exu_fp_name", "b8_community_committee_fp_name", 
                                                    "b9_community_committee_fp_cell", "q0_3_organization", "q0_4_date", "b7_community_committee_in_place"), contains("number"))
 write.xlsx(final_dataset_external, paste0("./output/external/CCCM_SiteReporting_V2 External_",today,".xlsx"))    
-
 
 ### ARCHIVED CODE ?
 

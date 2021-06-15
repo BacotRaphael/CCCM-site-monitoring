@@ -459,24 +459,24 @@ df.adm2 <- adm2 %>% st_join(response.with.gps %>% st_as_sf() %>%
 df.adm_loc <- response.with.gps %>% filter(!is.na(issue.gps)) %>% st_as_sf()
 pal.adm2 <- function(x) return(ifelse(x!=0, "indianred", "ghostwhite"))
 
-icon.blue <- makeAwesomeIcon(icon= 'flag', markerColor = 'blue', iconColor = 'black')
-icon.red <- makeAwesomeIcon(icon = 'flag', markerColor = 'red', library='fa', iconColor = 'black')
+# icon.blue <- makeAwesomeIcon(icon= 'flag', markerColor = 'blue', iconColor = 'black')
+# icon.red <- makeAwesomeIcon(icon = 'flag', markerColor = 'red', library='fa', iconColor = 'black')
 
 map <- leaflet() %>%
   addPolygons(data=df.adm2, color = "#B5B5B5", weight = 2, opacity = 0.5,
               highlightOptions = highlightOptions(color = "white", weight = 2), fillOpacity = 0.5,
               fillColor = ~pal.adm2(df.adm2$has.gps.issue),
               label = df.adm2$admin2Name_en) %>%
-  addAwesomeMarkers(data = df.adm_loc, group = "All", icon = icon.blue,
-                    label = paste0("Site name: ", df.adm_loc$a4_site_name," - Actual sub-district according to GPS location is: ", df.adm_loc$admin3Name_en)) %>%
-  addAwesomeMarkers(data = df.adm_loc %>% filter(admin3Name_en_df!=admin3Name_en), group = "Non matching GPS", icon = icon.red,
-                    label = paste0("Site name: ", df.adm_loc$a4_site_name," - The admin name entered in dataset is ", df.adm_loc$admin3Name_en_df, ",\r\nactual sub-district according to GPS location is: ", df.adm_loc$admin3Name_en)) %>%
-  # addMarkers(data = df.adm_loc, group = "All",
-  #            label = paste0("Site name: ", df.adm_loc$a4_site_name," - The admin name entered in dataset is ", df.adm_loc$admin3Name_en_df, ",\r\nactual district according to GPS location is: ", df.adm_loc$admin3Name_en)) %>%
-  # addMarkers(data = df.adm_loc %>% filter(admin3Name_en_df!=admin3Name_en), group = "Non matching GPS",
-  #            label = paste0("Site name: ", df.adm_loc$a4_site_name," - The admin name entered in dataset is ", df.adm_loc$admin3Name_en_df, ",\r\nactual district according to GPS location is: ", df.adm_loc$admin3Name_en)) %>%
+  # addAwesomeMarkers(data = df.adm_loc, group = "All", icon = icon.blue,
+  #                   label = paste0("Site name: ", df.adm_loc$a4_site_name," - Actual sub-district according to GPS location is: ", df.adm_loc$admin3Name_en)) %>%
+  # addAwesomeMarkers(data = df.adm_loc %>% filter(admin3Name_en_df!=admin3Name_en), group = "Non matching GPS", icon = icon.red,
+  #                   label = paste0("Site name: ", df.adm_loc$a4_site_name," - The admin name entered in dataset is ", df.adm_loc$admin3Name_en_df, ",\r\nactual sub-district according to GPS location is: ", df.adm_loc$admin3Name_en)) %>%
+  addMarkers(data = df.adm_loc, group = "All",
+             label = paste0("Site name: ", df.adm_loc$a4_site_name," - The admin name entered in dataset is ", df.adm_loc$admin3Name_en_df, ",\r\nactual district according to GPS location is: ", df.adm_loc$admin3Name_en)) %>%
+  addMarkers(data = df.adm_loc %>% filter(admin3Name_en_df!=admin3Name_en), group = "Non matching GPS",
+             label = paste0("Site name: ", df.adm_loc$a4_site_name," - The admin name entered in dataset is ", df.adm_loc$admin3Name_en_df, ",\r\nactual district according to GPS location is: ", df.adm_loc$admin3Name_en)) %>%
   addTiles() %>% 
-  addLayersControl(overlayGroups = c("All", "Non matching"),
+  addLayersControl(baseGroups = c("All", "Non matching"), position =  "bottomleft",
     options = layersControlOptions(collapsed = FALSE))
 
 map                                                                             # Display map
