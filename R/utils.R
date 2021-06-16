@@ -35,6 +35,13 @@ detect.outliers <- function(df, method="sd-linear", n.sd=3, n.iqr=3){
 
 ## Priority needs check
 priority.check <- function(df, var){
+  col.priority.needs <- c("i1_top_priority_need", "i2_second_priority_need", "i3_third_priority_need")
+  service.level.var <- response %>% select(c("shelter_maintenance_services":"waste_disposal_services")) %>% colnames
+  priority.need <- c("shelter_maintenance_assistance", "non_food_items", "food", "cash_assistance", 
+                     "water", "medical_assistance", "education", "livelihood_assistance",
+                     "protection_services", "nutrition_services", "sanitation_services")
+  logical.inconsistencies <- data.frame(service.level.var, priority.need) %>%
+    mutate(issue=paste0(service.level.var, " reported as adequate but ", priority.need, " cited as top three priority need. To be checked."))
   df <- df %>% 
     mutate(flag = ifelse((!!sym(var) == "adequate") &
                            ((i1_top_priority_need==logical.inconsistencies[logical.inconsistencies$service.level.var==var, "priority.need"]) |
@@ -47,15 +54,8 @@ priority.check <- function(df, var){
 }
 
 priority.need.checks <- function(df){
-  col.priority.needs <- c("i1_top_priority_need", "i2_second_priority_need", "i3_third_priority_need")
-  service.level.var <- response %>% select(c("shelter_maintenance_services":"waste_disposal_services")) %>% colnames
-  priority.need <- c("shelter_maintenance_assistance", "non_food_items", "food", "cash_assistance", 
-                     "water", "medical_assistance", "education", "livelihood_assistance",
-                     "protection_services", "nutrition_services", "sanitation_services")
-  logical.inconsistencies <- data.frame(service.level.var, priority.need) %>%
-    mutate(issue=paste0(service.level.var, " reported as adequate but ", priority.need, " cited as top three priority need. To be checked."))
   for (var in service.level.var){
-    check_var <- priority.need.checks.new(df, var)
+    check_var <- priority.check(df, var)
     add.to.cleaning.log(check_var, check_id = paste0("check_priority_", var), question.names=c(var, col.priority.needs), issue = "issue")
   }
   adequacy_log <<- cleaning.log %>% filter(grepl("check_priority", check_id))
@@ -228,12 +228,13 @@ save.sitename.follow.up <- function(cl, filename.out="output/test.xlsx"){
   setColWidths(wb, "Follow-up", cols=3, widths=12.5)
   setColWidths(wb, "Follow-up", cols=4, widths=31)
   setColWidths(wb, "Follow-up", cols=5, widths=20)
-  setColWidths(wb, "Follow-up", cols=6, widths=15)
-  setColWidths(wb, "Follow-up", cols=7, widths=5)
-  setColWidths(wb, "Follow-up", cols=8, widths=8)
-  setColWidths(wb, "Follow-up", cols=c(9:10), widths=15)
-  setColWidths(wb, "Follow-up", cols=(11:16), widths=15)
-  setColWidths(wb, "Follow-up", cols=17:19, widths=25)
+  setColWidths(wb, "Follow-up", cols=6, widths=22)
+  setColWidths(wb, "Follow-up", cols=7, widths=6.5)
+  setColWidths(wb, "Follow-up", cols=8, widths=8.5)
+  setColWidths(wb, "Follow-up", cols=9, widths=8.5)
+  setColWidths(wb, "Follow-up", cols=c(10:11), widths=15)
+  setColWidths(wb, "Follow-up", cols=(12:17), widths=15)
+  setColWidths(wb, "Follow-up", cols=18:20, widths=25)
   
   # addStyle(wb, "Follow-up", style = createStyle(wrapText=T), rows = 1:(ncol(cl)+1), cols=8)
   # addStyle(wb, "Follow-up", style = createStyle(wrapText=T), rows = 1:(ncol(cl)+1), cols=9)

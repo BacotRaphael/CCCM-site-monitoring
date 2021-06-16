@@ -93,6 +93,7 @@ response <- response %>%
 coldf <- c("uuid", "q0_3_organization", "a4_site_name")
 col.cl <- c("uuid", "agency", "area", "variable", "issue", "check_id", "old_value", "new_value", "fix", "checked_by")
 cleaning.log <- initialise.cleaning.log()
+cleaning.log.internal <- initialise.cleaning.log()
 
 ## Check 1: check that there are no site surveyed twice
 n_occur <- response %>%                                                         # Check duplicates sitenames
@@ -167,11 +168,18 @@ sitename_log <- check_sitename %>%
   group_by(uuid) %>% mutate(n=n()) %>% arrange(q0_3_organization, -n, uuid) %>% # Sort so duplicate matches appear next to each other
   filter(flag) %>% select(uuid, q0_3_organization, a4_site_name, issue, a4_other_site, everything()) %>% 
   mutate(a4_other_site_translation = transliterate(a4_other_site),              # Transliterate the arabic sitename into english alphabet // test
-         keep = ifelse(n==1, "TRUE", ""),                                       # TRUE / FALSE to filter out non kept partial matches, is set to TRUE by default when there is 0 or 1 partial match
+         change = ifelse(!is.na(Site_ID_perfect_match), "TRUE" , ""),           # TRUE / FALSE to flag easy site names that will be done without external follow-up
          new_site = "",                                                         # TRUE / FALSE to mark new sites
-         a4_site_name_new = ifelse(!is.na(Site_ID_perfect_match), Site_ID_perfect_match, ""), # To be filled with final site code and name / propose the perfect match as proposition, but needs to be checked!
-         a4_site_name_new_en = ifelse(!is.na(Site_ID_perfect_match), Site_Name_perfect_match, ""),
-         a4_site_name_new_ar = ifelse(!is.na(Site_ID_perfect_match), a4_other_site, ""),
+         follow_up = ifelse(n==1, "TRUE", ""),                                  # TRUE / FALSE to filter partial matches requiring follow-up with partners - is set to TRUE by default when there is 0 or 1 partial match
+         a4_site_name_new = ifelse(!is.na(Site_ID_perfect_match), Site_ID_perfect_match,
+                                   ifelse(!is.na(Site_ID_tidy_match), Site_ID_tidy_match,
+                                          ifelse(!is.na(Site_ID_partial_match), Site_ID_partial_match, ""))), # To be filled with final site code and name / propose the perfect match, then tidy match then partial match as proposition, but needs to be checked!
+         a4_site_name_new_en = ifelse(!is.na(Site_ID_perfect_match), Site_Name_perfect_match,
+                                      ifelse(!is.na(Site_Name_tidy_match), Site_Name_tidy_match,
+                                             ifelse(!is.na(Site_Name_partial_match), Site_Name_partial_match, ""))),
+         a4_site_name_new_ar = ifelse(!is.na(Site_ID_perfect_match), a4_other_site,
+                                      ifelse(!is.na(Site_Name_In_Arabic_before_tidy_match), Site_Name_In_Arabic_before_tidy_match,
+                                             ifelse(!is.na(Site_Name_In_Arabic_partial_match), Site_Name_In_Arabic_partial_match, ""))),
          .after = "a4_other_site") %>% select(uuid:a5_2_gps_latitude, -start, -end, -today) %>%
   relocate(Site_Name_In_Arabic_partial_match, .after = "Site_Name_partial_match") %>% dplyr::rename(agency=q0_3_organization, area=a4_site_name)
   
@@ -182,83 +190,97 @@ browseURL(paste0("output/cleaning log/site name/site_name_log_", today, ".xlsx")
 
 ##### 2.2. Manual sitename log filtering & updating ############################
 
-## 2.2.1. Group and hide column H to P in excel sheet to ease process. 
+## 2.2.1. Group and hide column a4_site_name_new to Site_Name_In_Arabic_before_tidy_match in excel sheet to ease process. 
 ## 2.2.2. Go through each group of duplicate partial matches that have the same color to inspect which  
 ##        Site_Name_In_Arabic_partial_match correspond to the value in a4_other_site. 
 ##        If you don't read arabic, try to filter using a4_other_site_translation (which is an automatic arabic transliteration)
 ##        and compare it with the different Site_Name_partial_match in english from the masterlist.
-## 2.2.3. You can either delete the rows that are false match or write "TRUE" to the column G "keep". 
-##        => Only sitenames with duplicate partial match requires updating the column “keep”.
+## 2.2.3. You can either delete the rows that are false match or write "TRUE" to the column G "follow_up". 
+##        => Only sitenames with duplicate partial match requires updating the column “follow_up”.
 ##        For all other sitenames, the column is automatically set to TRUE in the script.
-## 2.2.4. For new sites, just write the english name and the arabic name in the columns a4_site_name_new_name_en/a4_site_name_new_name_ar and leave the a4_site_name_new blank
-## 2.2.5. After updating the sitename log, save it in the same folder with "_updated" at the end of the name
+## 2.2.4. For site name matches you're 100% confident about, write "TRUE" in the column "change". 
+##        The script will update the site name without including this to the partner's cleaning log.
+## 2.2.5. For new sites, just write the english name and the arabic name in the columns a4_site_name_new_name_en & a4_site_name_new_name_ar
+##        and leave the a4_site_name_new blank
+## 2.2.6. After updating the sitename log, save it in the same folder with "_updated" at the end of the name
 
 ################################################################################
 
 ## 2.2.6. Reading the manually updated sitename cleaning log
-sitenamelog.updated <- "output/cleaning log/site name/site_name_log_2021-06-15_updated.xlsx"
+sitenamelog.updated <- "output/cleaning log/site name/site_name_log_2021-06-16_updated.xlsx"
 sitename_log_updated <- read.xlsx(sitenamelog.updated) 
-values.keep <- sitename_log_updated$keep %>% unique %>% unlist
-print(paste0("Update the vector of values line 208 in case other syntax than TRUE or T has been used to mark partial matches to be kept."))
-values.keep
 
-sitename_log_updated <- sitename_log_updated %>%                                # Make sure we filtered out duplicate partial matches
+# Make sure no rubbish has been recorded in the the important columns
+sitename_log_updated %>% select(change, new_site, follow_up) %>% summarise_all(~unique(.))
+
+sitename_log_updated <- sitename_log_updated %>%                                # Make sure we flag out duplicate partial matches
   group_by(uuid) %>% mutate(n=n()) %>% ungroup %>%
-  filter((keep %in% c("TRUE", "T")) | n == 1) %>%                               # Keep only the validated partial matches and non duplicated sitenames
+  filter((follow_up %in% c("TRUE", "T")) | n == 1) %>%                          # Keep only the validated partial matches and non duplicated sitenames
   filter(!(!is.na(Site_ID_perfect_match) &                                      # Filter out partial matches that conflict with perfect matches
              (Site_ID_perfect_match != Site_ID_partial_match))) %>%   
   group_by(uuid) %>% mutate(n=n()) %>% ungroup                                  # Check eventual remaining duplicates that might have been forgotten
 
 if ((test <- nrow(sitename_log_updated %>% filter(n>1))) > 0) {
-  stop(paste0("There are ", test," remaining duplicate partial matches in sitename log! \n\nOpen the updated cleaning log file and filter them out either by deleting the non relevant matches or by setting keep column to TRUE for relevant matches"))}
+  print(paste0("There are ", test," remaining duplicate partial matches in sitename log! \n\nOpen the updated cleaning log file and make sure it corresponds to potential valid matches to be sent to partners as follow-up."))}
 remaining.dup.site <- sitename_log_updated %>% filter(n>1)
 
 ## Check sites that still have no attributed code
 nocode_sites <- sitename_log_updated %>% filter(is.na(a4_site_name_new) & !(new_site  %in% c("TRUE", "T")))
-if ((s <- nrow(nocode_sites)) > 0) {print(paste0("There are ", s, " sites with no attributed site code. Please manually update again the sitelog and find the corresponding sitecode or mark them as new sites by writing 'TRUE' in column 'new_site'."))}
+if ((s <- nrow(nocode_sites)) > 0) {print(paste0("There are ", s, " sites with no attributed site code. Please make sure that there are no potential match and if necessary mark them as potential new sites by writing 'TRUE' in column 'new_site'."))}
+nocode_sites
 
-## Filter new sites 
-new_sites <- sitename_log_updated %>% 
-  filter(is.na(a4_site_name_new) & (new_site %in% c("TRUE", "T")))              ## MAKE SURE THAT THIS IS THE FINAL LIST OF NEW SITES THAT REQUIRE A CODE - If one of them has a code, go back to previous step
-if ((s <- nrow(new_sites)) > 0) {print(paste0("There are ", s, " new sites requiring a site code: "))
-  print(paste0(new_sites$a4_site_name_new_en, " - ", new_sites$a4_site_name_new_ar))}
-# new_sites                                         
+## Filter new sites // Data cleaning script Move that part so it's part of the main cleaning log
+sitename_log_updated <- sitename_log_updated %>% 
+  mutate(flag.new=ifelse(is.na(a4_site_name_new) & (new_site %in% c("TRUE", "T")), T, F), 
+         a4_site_name_new_ar=ifelse(flag.new, a4_other_site, a4_site_name_new_ar), ## propose name in arabic if nothing is written in the log for potential new sites    
+         issue = ifelse(new_site %in% c("TRUE"), "No match have been found. Is this a new site?", issue))          
+check_new_sites <- sitename_log_updated %>% filter(flag.new)                    ## this is the list of site that will be flagged as potential new sites to partners in the cleaning log
+if ((s <- nrow(sitename_log_updated %>% filter(flag.new))) > 0) {print(paste0("There are ", s, " potential new sites requiring feedback from partners: "))
+  print(paste0(check_new_sites$a4_site_name_new_ar))}
 
-## Create new sitename code for remaining sites
-max.id.split <- masterlist$Site_ID %>% sub(".*?_", "",.) %>% as.numeric %>% max(na.rm = T) # Extract the highest number in site id in masterlist
-latest_id <- masterlist$Site_ID[grepl(paste0("_", max.id.split), masterlist$Site_ID)]      # Extract the latest full ID
-seq <- (max.id.split+1):(max.id.split+500)                                                 # Create list of numbers starting from the latest one
-
-new_sites <- new_sites %>% 
-  mutate(a4_site_name_new = paste0(a2_district, "_", seq[1:nrow(.)]),           # Create new site ID
-         issue = paste0("Marked as 'other' because it is a new site. Will be added to master list with site ID: ", a4_site_name_new))
-new.sites.uuid <- new_sites$uuid
-
-## Update sitename_log to add new site_name
+# clean site name cleaning log new proposition for potential new sites to avoid confusion
 sitename_log_updated <- sitename_log_updated %>%
-  filter(!uuid %in% new.sites.uuid) %>%                                         # filter out new sites from sitename log updated
-  bind_rows(new_sites)                                                          # Add new sites with the new attributed codes
-sitename_log_updated %>% save.new.sites(filename.out = paste0("output/cleaning log/site name/site_name_log_", today, "_final.xlsx"))
-browseURL(paste0("output/cleaning log/site name/site_name_log_", today, "_final.xlsx"))
+  mutate_at(vars(matches("a4_site_name_new|_match")), ~ifelse(new_site %in% c("TRUE", "T"), "", .))
 
-## Apply changes to sitename column a4_site_name according to Partner's feedback.
+## Apply changes to sitename column a4_site_name for all straightforward perfect or partial matches (change=TRUE)
 ## Question: do we need to update the new name en and ar in response or useless?
-for (r in nrow(sitename_log_updated)){
-  new_id <- sitename_log_updated[r, "a4_site_name_new"]
-  new_name <- sitename_log_updated[r, "a4_site_name_new_en"]
-  new_name_ar <- sitename_log_updated[r, "a4_site_name_new_ar"]
+sitename_log_internal <- sitename_log_updated %>% filter(change %in% c("TRUE")) %>% mutate_all(as.character)
+for (r in nrow(sitename_log_internal)){
+  new_id <- sitename_log_internal[r, "a4_site_name_new"]
+  new_name <- sitename_log_internal[r, "a4_site_name_new_en"]
+  new_name_ar <- sitename_log_internal[r, "a4_site_name_new_ar"]
   if (!is.na(new_id) & !is.na(new_name) & !is.na(new_name_ar)){
-    response[response$uuid == sitename_log_updated[r,"uuid"], "a4_site_name"] <- new_id
+    response[response$uuid == sitename_log_internal[r,"uuid"], "a4_site_name"] <- new_id
   }
 }
 
 ## Reformatting final sitename cleaning log to put everything into one single cleaning log for all changes at once in data cleaning script
-## Note check_id == 2 will be stored in separate internal cleaning log and won't be sent again to partners of course
-sitename_log_final <- sitename_log_updated %>%
-  dplyr::select(uuid, agency, issue, a4_other_site, a4_site_name_new, a4_site_name_new_en, a4_site_name_new_ar, new_site) %>%
+sitename_log <- sitename_log_updated %>%
+  dplyr::select(uuid, agency, issue, a4_other_site, a4_site_name_new, a4_site_name_new_en, a4_site_name_new_ar, new_site, change) %>%
   mutate(area="other", variable = "a4_site_name", old_value = "other", check_id = "2", fix="Checked with partner", checked_by="ON") %>%
   dplyr::rename(new_value = a4_site_name_new) %>% select(all_of(col.cl), new_site, everything()) %>% mutate_all(as.character)
-cleaning.log <- cleaning.log %>% bind_rows(sitename_log_final)
+sitename_log_external <- sitename_log %>% filter(!change %in% c("TRUE")) %>% mutate(comment=ifelse(new_site %in% c("TRUE"), "Update the column new_site with TRUE to confirm if this is a new site, and fill the column a4_site_name_new_en and a4_site_name_new_ar with the sitename in english and in arabic.", ""), new_site=gsub("TRUE","?", new_site))
+
+cleaning.log <- cleaning.log %>% bind_rows(sitename_log_external)               # Add sitenames requiring partner feedback to cleaning log
+cleaning.log.internal <- cleaning.log.internal %>%                              # Add sitenames that have been internally updated to internal cleaning log for the record
+  bind_rows(sitename_log_internal)                    
+
+# ## Create new sitename code for remaining sites
+# max.id.split <- masterlist$Site_ID %>% sub(".*?_", "",.) %>% as.numeric %>% max(na.rm = T) # Extract the highest number in site id in masterlist
+# latest_id <- masterlist$Site_ID[grepl(paste0("_", max.id.split), masterlist$Site_ID)]      # Extract the latest full ID
+# seq <- (max.id.split+1):(max.id.split+500)                                                 # Create list of numbers starting from the latest one
+# 
+# new_sites <- new_sites %>% 
+#   mutate(a4_site_name_new = paste0(a2_district, "_", seq[1:nrow(.)]),           # Create new site ID
+#          issue = paste0("Marked as 'other' because it is a new site. Will be added to master list with site ID: ", a4_site_name_new))
+# new.sites.uuid <- new_sites$uuid
+# 
+# ## Update sitename_log to add new site_name
+# sitename_log_updated <- sitename_log_updated %>%
+#   filter(!uuid %in% new.sites.uuid) %>%                                         # filter out new sites from sitename log updated
+#   bind_rows(new_sites)                                                          # Add new sites with the new attributed codes
+# sitename_log_updated %>% save.new.sites(filename.out = paste0("output/cleaning log/site name/site_name_log_", today, "_final.xlsx"))
+# browseURL(paste0("output/cleaning log/site name/site_name_log_", today, "_final.xlsx"))
 
 ## Check 3: Match q3 organization other names with kobo list
 ## 3.1. Do a partial match for Partner name in arabic from the external choice list
@@ -346,14 +368,17 @@ org_cleaning_log %>% write.xlsx(paste0("output/cleaning log/organisation name/or
 cleaning.log <- cleaning.log %>% bind_rows(org_cleaning_log)
   
 ## Check 4.0 that the right tool has been used
-## Need to add a column named "tool" in the sitename masterlist excel file, with either V1 or V2 for each site.
+## Parked for now - Need to add a column named "tool" in the sitename masterlist excel file, with either V1 or V2 for each site.
+## left_join with AoR document to see which tool should be used. + add it to the cleaning log when in doubt?
+#   aor3 
+
 check_tool_version <- response %>%
   left_join(masterlist %>% dplyr::select(Site_ID, tool), by = c("a4_site_name" = "Site_ID")) %>%
   mutate(flag = ifelse(tool != tool.version, T, F),
          issue = ifelse(flag, paste0("This site survey has been conducted with the Kobo tool version ", tool.version, " instead of ", tool), ""))
 survey_wrong_tool <- check_tool_version %>% filter(flag)
 if (t <- nrow(survey_wrong_tool) > 0){print(paste0(t, " site surveys may have used the wrong kobo tool. Please check."))} else {"No issue with Kobo tool version have been detected."}
-
+## If doubt => ask under which area of control is this site?
 survey_version_log <- survey_wrong_tool %>%
   dplyr::rename(agency=q0_3_organization, area=a4_site_name) %>%
   mutate(variable="tool version", old_value=tool.version, new_value=tool, fix="Checked with partner", checked_by="ON", check_id="4.0") %>%
@@ -391,7 +416,8 @@ m
 ## Sanitizing gps coordinates entries
 ## Convert to DD when possible and flag gps coordinates syntax issues 
 response <- clean.gps(response, x = "a5_1_gps_longitude", y = "a5_2_gps_latitude")
-# response.2 <- clean.gps(response.2, x = "a5_1_gps_longitude", y = "a5_2_gps_latitude")
+
+## => fix arabic coma issue
 
 # Check what remaining entries have not been cleaned:
 check.not.cleaned <- response %>% select(matches("longitude|latitude|issue|_clean")) %>% filter(is.na(Longitude_clean)|is.na(Latitude_clean))
@@ -489,6 +515,8 @@ check_gps <- response.df %>%
          agency=q0_3_organization, area=a4_site_name,
          issue = paste(issue.gps, issue.admin3, sep = " - ") %>% gsub(" - $|^ - ", "",.), .before = "q0_3_organization_other")
 
+## Add internal and external check_gps to only ask feedback for tricky checks
+
 add.to.cleaning.log(checks = check_gps, check_id = "4",
                     question.names = c("a3_sub_district", "a5_1_gps_longitude", "a5_2_gps_latitude"), 
                     issue = "issue",
@@ -520,8 +548,8 @@ cleaning.log <- cleaning.log %>% bind_rows(check_outliers)
 ### Check that a service defined as a priority need is not classified as adequate
 ## The above function will add all priority needs check identified in priority_need_log to the existing cleaning log
 cleaning.log <- cleaning.log %>% filter(!grepl("check_priority", check_id))     # To clear out duplicates in case you run the function priority.need.check more than once
-priority.need.check(response) 
-# adequacy_log                                                                  # priority need log is stored in this dataframe
+priority.need.checks(response) 
+adequacy_log                                                                  # priority need log is stored in this dataframe
 
 if(nrow(adequacy_log)==0) {print("No issues across avilability and service provisions have been detected. The dataset seems clean.")} else {
   print("Issues across avilability and service provisions have been detected. To be checked")}
