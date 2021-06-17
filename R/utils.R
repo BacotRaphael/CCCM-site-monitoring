@@ -35,13 +35,9 @@ detect.outliers <- function(df, method="sd-linear", n.sd=3, n.iqr=3){
 
 ## Priority needs check
 priority.check <- function(df, var){
-  col.priority.needs <- c("i1_top_priority_need", "i2_second_priority_need", "i3_third_priority_need")
-  service.level.var <- response %>% select(c("shelter_maintenance_services":"waste_disposal_services")) %>% colnames
-  priority.need <- c("shelter_maintenance_assistance", "non_food_items", "food", "cash_assistance", 
-                     "water", "medical_assistance", "education", "livelihood_assistance",
-                     "protection_services", "nutrition_services", "sanitation_services")
-  logical.inconsistencies <- data.frame(service.level.var, priority.need) %>%
-    mutate(issue=paste0(service.level.var, " reported as adequate but ", priority.need, " cited as top three priority need. To be checked."))
+  patt_rep <- logical.inconsistencies %>% mutate(replacement = ifelse(service.level.var==var, priority.need, NA)) %>% select(-issue, -service.level.var) %>%
+    rbind(c("legal_services", NA)) ## Choice in priority need that has no corresponding service level var in survey. to be checked
+  keep <- logical.inconsistencies %>% filter(service.level.var==var) %>% pull(priority.need) %>% as.character
   df <- df %>% 
     mutate(flag = ifelse((!!sym(var) == "adequate") &
                            ((i1_top_priority_need==logical.inconsistencies[logical.inconsistencies$service.level.var==var, "priority.need"]) |
@@ -49,36 +45,69 @@ priority.check <- function(df, var){
                            (i3_third_priority_need==logical.inconsistencies[logical.inconsistencies$service.level.var==var, "priority.need"])), T, F),
            issue = ifelse(flag, logical.inconsistencies[logical.inconsistencies$service.level.var==var, "issue"], "")) %>%
     dplyr::select("uuid", "q0_3_organization", "a4_site_name", any_of(c(var, col.priority.needs)), flag, issue) %>% filter(flag) %>%
-    dplyr::rename(agency=q0_3_organization, area=a4_site_name)  
+    dplyr::rename(agency=q0_3_organization, area=a4_site_name) %>%
+    mutate_at(vars(matches("priority_need")), ~str_replace_all(., setNames(patt_rep$replacement,patt_rep$priority.need)))
   return(df)
 }
 
 priority.need.checks <- function(df){
+  col.priority.needs <<- c("i1_top_priority_need", "i2_second_priority_need", "i3_third_priority_need")
+  service.level.var <<- response %>% select(c("shelter_maintenance_services":"waste_disposal_services")) %>% colnames
+  priority.need <<- c("shelter_maintenance_assistance", "non_food_items", "food", "cash_assistance", 
+                     "water", "medical_assistance", "education", "livelihood_assistance",
+                     "protection_services", "nutrition_services", "sanitation_services")
+  logical.inconsistencies <<- data.frame(service.level.var, priority.need) %>%
+    mutate(issue=paste0(service.level.var, " reported as adequate but ", priority.need, " cited as top three priority need. To be checked."))
   for (var in service.level.var){
     check_var <- priority.check(df, var)
-    add.to.cleaning.log(check_var, check_id = paste0("check_priority_", var), question.names=c(var, col.priority.needs), issue = "issue")
+    add.to.priority.log(check_var, check_id = paste0("check_priority_", var), question.names=c(var, col.priority.needs), issue = "issue")
   }
+  cleaning.log <<- cleaning.log %>% filter(!(grepl("check_priority", check_id) & is.na(old_value)))
   adequacy_log <<- cleaning.log %>% filter(grepl("check_priority", check_id))
 }
 
-clean.gps <- function(df, x, y){
+
+# 
+# ### TO BE DELETED / TROUBLE SHOOTING
+# df <- response
+# x = "a5_1_gps_longitude"
+# y = "a5_2_gps_latitude"
+# check.not.cleaned.test <- df.temp %>% select(matches("longitude|latitude|issue|_clean|flag")) %>% filter(is.na(Longitude_clean)|is.na(Latitude_clean))
+# # # Check the automatically cleaned lon/lat entries
+# check.cleaned.test <- df.temp %>% select(matches("longitude|latitude|issue|_clean|flag")) %>%
+#   filter(!is.na(Longitude_clean) | !is.na(Latitude_clean) & (!is.na(issue_lon) | !is.na(issue_lat)))
+
+arabic.tonumber <- function(s){
+  arabic <- c("\u0660\u0661\u0662\u0663\u0664\u0665\u0666\u0667\u0668\u0669\u06F0\u06F1\u06F2\u06F3\u06F4\u06F5\u06F6\u06F7\u06F8\u06F9")
+  english <- c("01234567890123456789")
+  suppressWarnings(res <- lapply(s, function(x) as.numeric(chartr(arabic, english, x))) %>% unlist)
+  # suppressWarnings(res <- as.numeric(chartr(arabic,english,s)))
+  res[which(is.na(res))] <- s[which(is.na(res))]
+  return(res)
+}
+
+clean.invalid.char.gps <- function(df, x, y){
   df.temp <- df %>%
-    mutate(flag_lon = ifelse(grepl(",|-|\\/|\\\\|،", !!sym(x)), T, F),
+    mutate(flag_lon = ifelse(grepl("،", !!sym(x)) | grepl(",|-|\\/|\\\\", !!sym(x)), T, F),
            issue_lon = ifelse(flag_lon, "Longitude include invalid characters", ""),
-           long_clean = unlist(lapply(ifelse(flag_lon, gsub("،", "\\.", gsub(",|-|\\/|\\\\", "", !!sym(x))), !!sym(x)), arabic.tonumber)),
+           long_clean = arabic.tonumber(ifelse(flag_lon, gsub("،", "\\.", gsub(",|-|\\/|\\\\", "", !!sym(x))), !!sym(x))),
            
-           flag_lat = ifelse(grepl(",|-|\\/|\\\\|،", !!sym(y)), T, F),
+           flag_lat = ifelse(grepl("،", !!sym(y)) | grepl(",|-|\\/|\\\\", !!sym(y)), T, F),
            issue_lat = ifelse(flag_lat, "Latitude include invalid characters", ""),
-           lat_clean = unlist(lapply(ifelse(flag_lat, gsub("،", "\\.", gsub(",|-|\\/|\\\\", "", !!sym(y))), !!sym(y)), arabic.tonumber)),
-           
-           issue_lon = case_when(
+           lat_clean = arabic.tonumber(ifelse(flag_lat, gsub("،", "\\.", gsub(",|-|\\/|\\\\", "", !!sym(y))), !!sym(y))))
+  return(df.temp)
+}
+
+sanitize.gps <- function(df, x, y){
+  df.temp <- df %>%
+    mutate(issue_lon = case_when(
              is.na(long_clean) ~ paste0(issue_lon, "; No coordinates entered: follow-up"),
              (long_clean %>% as.numeric == 0) | (long_clean %>% as.numeric %>% abs > 180) ~ paste0(issue_lon, "; Invalid Longitude coordinate"),
              near(long_clean %>% as.numeric, lat_clean %>% as.numeric , tol = 0.2) ~ paste0(issue_lon, "; Longitude and Latitude almost equal"),
              (long_clean %>% as.numeric < 20) & (lat_clean %>% as.numeric %>% abs < 90) &
                (!near(long_clean %>% as.numeric, lat_clean %>% as.numeric , tol = 0.2)) ~ paste0(issue_lon, "; Latitude entered instead of Longitude"),
-             grepl("E|°|\"|LON", long_clean) & 
-               !is.na(parzer::parse_lon(gsub("E|\"|LON", "", long_clean))) ~ paste0(issue_lon, "; Longitude invalid format: mix beteen DD and DMS"),
+             grepl("°|E|\"|LON", long_clean) & 
+               (!is.na(parzer::parse_lon(gsub("E|\"|LON", "", long_clean)))) ~ paste0(issue_lon, "; Longitude invalid format: mix beteen DD and DMS"),
              is.na(gsub("E|°|\"|LON|LAT", "", long_clean) %>% as.numeric)  ~ paste0(issue_lon, "; Longitude format not recognized"),
              TRUE ~ issue_lon),
            
@@ -96,8 +125,60 @@ clean.gps <- function(df, x, y){
              near(long_clean %>% as.numeric, lat_clean %>% as.numeric , tol = 0.2) ~ paste0(issue_lat, "; Longitude and Latitude almost equal"),
              (lat_clean %>% as.numeric > 40) & (long_clean %>% as.numeric %>% abs < 180) &
                (!near(lat_clean %>% as.numeric, long_clean %>% as.numeric , tol = 0.2)) ~ paste0(issue_lat, "; Longitude entered instead of Latitude"),
-             grepl("N|°|\"|LAT", lat_clean) & 
-               !is.na(parzer::parse_lat(gsub("LON|N|\"|LAT", "", lat_clean))) ~ paste0(issue_lat, "; Latitude invalid format: mix beteen DD and DMS"),
+             grepl("°|LON|N|\"|LAT", lat_clean) & 
+               (!is.na(parzer::parse_lat(gsub("LON|N|\"|LAT", "", lat_clean)))) ~ paste0(issue_lat, "; Latitude invalid format: mix beteen DD and DMS"),
+             is.na(gsub("N|°|\"|LAT", "", lat_clean) %>% as.numeric)  ~ paste0(issue_lat, "; Latitude format not recognized"),
+             TRUE ~ issue_lat),
+           
+           Latitude_clean = case_when(
+             is.na(lat_clean) ~ NA_real_,
+             grepl("Invalid Latitude coordinate", issue_lat) ~ NA_real_,
+             grepl("Longitude entered instead of Latitude", issue_lat) ~ long_clean %>% as.numeric,
+             grepl("Latitude invalid format: mix beteen DD and DMS", issue_lat) ~ parzer::parse_lat(gsub("LON|N|\"|LAT", "", lat_clean)) %>% as.numeric,
+             grepl("Latitude format not recognized", issue_lat) ~ NA_real_,
+             TRUE ~ lat_clean %>% as.numeric),
+           issue.gps = ifelse((issue_lon!="") | (issue_lat!=""), paste0(issue_lon,"; ", issue_lat), ""),
+           issue.gps = gsub("^; ; |^; |; $| ;","", issue.gps)
+    )
+  return(df.temp)
+}
+
+clean.gps <- function(df, x, y){
+  df.temp <- df %>%
+    mutate(flag_lon = ifelse(grepl("،", !!sym(x)) | grepl(",|-|\\/|\\\\", !!sym(x)), T, F),
+           issue_lon = ifelse(flag_lon, "Longitude include invalid characters", ""),
+           # long_clean = unlist(lapply(ifelse(flag_lon, gsub("،", "\\.", gsub(",|-|\\/|\\\\", "", !!sym(x))), !!sym(x)), arabic.tonumber)),
+           long_clean = arabic.tonumber(ifelse(flag_lon, gsub("،", "\\.", gsub(",|-|\\/|\\\\", "", !!sym(x))), !!sym(x))),
+           
+           flag_lat = ifelse(grepl("،", !!sym(y)) | grepl(",|-|\\/|\\\\", !!sym(y)), T, F),
+           issue_lat = ifelse(flag_lat, "Latitude include invalid characters", ""),
+           lat_clean = arabic.tonumber(ifelse(flag_lat, gsub("،", "\\.", gsub(",|-|\\/|\\\\", "", !!sym(y))), !!sym(y))),
+           
+           issue_lon = case_when(
+             is.na(long_clean) ~ paste0(issue_lon, "; No coordinates entered: follow-up"),
+             (long_clean %>% as.numeric == 0) | (long_clean %>% as.numeric %>% abs > 180) ~ paste0(issue_lon, "; Invalid Longitude coordinate"),
+             near(long_clean %>% as.numeric, lat_clean %>% as.numeric , tol = 0.2) ~ paste0(issue_lon, "; Longitude and Latitude almost equal"),
+             (long_clean %>% as.numeric < 20) & (lat_clean %>% as.numeric %>% abs < 90) &
+               (!near(long_clean %>% as.numeric, lat_clean %>% as.numeric , tol = 0.2)) ~ paste0(issue_lon, "; Latitude entered instead of Longitude"),
+             !is.na(parzer::parse_lon(gsub("E|\"|LON", "", long_clean))) ~ paste0(issue_lon, "; Longitude invalid format: mix beteen DD and DMS"),
+             is.na(gsub("E|°|\"|LON|LAT", "", long_clean) %>% as.numeric)  ~ paste0(issue_lon, "; Longitude format not recognized"),
+             TRUE ~ issue_lon),
+           
+           Longitude_clean = case_when(
+             is.na(long_clean) ~ NA_real_,
+             grepl("Invalid Longitude coordinate", issue_lon) ~ NA_real_,
+             grepl("Latitude entered instead of Longitude", issue_lon) ~ lat_clean %>% as.numeric,
+             grepl("Longitude invalid format: mix beteen DD and DMS", issue_lon) ~ parzer::parse_lon(gsub("E|\"|LON|LAT", "", long_clean)) %>% as.numeric,
+             grepl("Longitude format not recognized", issue_lon) ~ NA_real_,
+             TRUE ~ long_clean %>% as.numeric),
+           
+           issue_lat = case_when(
+             is.na(lat_clean) ~ paste0(issue_lat, "; No coordinates entered: follow-up"),
+             (lat_clean %>% as.numeric == 0) | (lat_clean %>% as.numeric %>% abs > 90) ~ paste0(issue_lat, "; Invalid Latitude coordinate"),
+             near(long_clean %>% as.numeric, lat_clean %>% as.numeric , tol = 0.2) ~ paste0(issue_lat, "; Longitude and Latitude almost equal"),
+             (lat_clean %>% as.numeric > 40) & (long_clean %>% as.numeric %>% abs < 180) &
+               (!near(lat_clean %>% as.numeric, long_clean %>% as.numeric , tol = 0.2)) ~ paste0(issue_lat, "; Longitude entered instead of Latitude"),
+              !is.na(parzer::parse_lat(gsub("LON|N|\"|LAT", "", lat_clean))) ~ paste0(issue_lat, "; Latitude invalid format: mix beteen DD and DMS"),
              is.na(gsub("N|°|\"|LAT", "", lat_clean) %>% as.numeric)  ~ paste0(issue_lat, "; Latitude format not recognized"),
              TRUE ~ issue_lat),
            
@@ -481,7 +562,10 @@ get.old.value.label <- function(cl){
   return(cl)
 }
 
-arabic.tonumber <- function(s){
+
+
+
+arabic.tonumber.old <- function(s){
   arabic <- c("\u0660\u0661\u0662\u0663\u0664\u0665\u0666\u0667\u0668\u0669\u06F0\u06F1\u06F2\u06F3\u06F4\u06F5\u06F6\u06F7\u06F8\u06F9")
   english <- c("01234567890123456789")
   suppressWarnings(res.int <- as.numeric(chartr(arabic,english,s)))

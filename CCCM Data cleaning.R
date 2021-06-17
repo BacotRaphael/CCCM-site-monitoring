@@ -74,7 +74,7 @@ for (file in files.cleaning.log){
 }
 
 ## Upload internal cleaning log [sitename/organisation name + easy gps changes]
-file.cleaning.log.internal <- "output/cleaning log/cleaning_log_int_all_2021-06-15.xlsx"
+file.cleaning.log.internal <- "output/cleaning log/cleaning_log_int_all_2021-06-17.xlsx"
 cleaning.log.int <- read.xlsx(file.cleaning.log.internal) %>% mutate_all(as.character)
 cleaning.log <- cleaning.log %>% bind_rows(cleaning.log.int)
 
@@ -84,9 +84,9 @@ duplicate.cl <- cleaning.log %>% group_by(uuid, variable) %>% filter(n()>1) %>% 
 ### Apply cleaning log changes to raw response file
 clean_data <- response
 for (n in seq_along(1:nrow(cleaning.log))){
-  col <- cleaning.log %>% slice(n) %>% pull(variable)                                                 # Get the name of the variable to be updated in response dataset
-  new_value <- cleaning.log %>% slice(n) %>% pull(new_value)                                          # Get the new value for this cleaning log entry
-  if (change %in% c("FALSE")) {new_value <- cleaning.log[n, "old_value"]} else if (change %in% c("TRUE")) {  # Tell to keep old value if new value is "confirmed"
+  col <- cleaning.log[n, "variable"]                                                                  # Get the name of the variable to be updated in response dataset
+  new_value <- cleaning.log[n, "new_value"]                                                           # Get the new value for this cleaning log entry
+  if (cleaning.log[n, "change"] %in% c("FALSE")) {new_value <- cleaning.log[n, "old_value"]} else if (cleaning.log[n, "change"] %in% c("TRUE")) {  # Tell to keep old value if new value is "confirmed"
     new_value <- cleaning.log[n, "new_value"]}
   if (col %in% colnames(clean_data)) {
     clean_data[clean_data$uuid==cleaning.log[n,"uuid"], col] <- new_value                             # Assign new value to the variable in the dataframe response
@@ -94,80 +94,40 @@ for (n in seq_along(1:nrow(cleaning.log))){
 }
 
 ### Old piece of code to create new site IDs for new sites
+site.masterlist<-masterlist$Site_ID %>% unique                                  # Make sure all sites are on one sheet or consolidate on one sheet in masterlist
 
 new.sites <- cleaning.log %>%
   filter(variable == "a4_site_name") %>%
   filter(new_site %in% c("TRUE", "T", TRUE, T)) %>%                             # Display site id entered that are not in masterlist or kobo tool
-  filter(!(a4_site_name_new %in% unique(c(site.list.kobo, site.masterlist)))) %>% 
+  filter(!(a4_site_name_new %in% unique(c(site.masterlist)))) %>% 
   relocate(a2_district, a3_sub_district, .after = "a4_site_name_new_ar") %>%
-  mutate(new_site=TRUE)                                                         # binary to flag new sites, set to TRUE by default for all NA sites + sites with no correspondance after updating sitename log
 
 ## Flag sites that are existing and that don't need a new name (changing column new_site to FALSE)
-existing.sites.uuid <- c("ca8c1315-4bf9-4cff-9c76-7c5eeac51182", "022deb2b-50ac-45dc-b3d5-44639236853a")
-new.sites <- new.sites %>% mutate(new_site = ifelse(uuid %in% existing.sites.uuid, FALSE, new_site)) # put new_site = FALSE for the uuid selected above
+# existing.sites.uuid <- c("ca8c1315-4bf9-4cff-9c76-7c5eeac51182", "022deb2b-50ac-45dc-b3d5-44639236853a")
+# new.sites <- new.sites %>% mutate(new_site = ifelse(uuid %in% existing.sites.uuid, FALSE, new_site)) # put new_site = FALSE for the uuid selected above
 
 ## Create new sitename code for remaining sites
 max.id.split <- masterlist$Site_ID %>% sub(".*?_", "",.) %>% as.numeric %>% max(na.rm = T) # Extract the highest number in site id in masterlist
+
 latest_id <- masterlist$Site_ID[grepl(paste0("_", max.id.split), masterlist$Site_ID)]      # Extract the latest full ID
+
 seq <- (max.id.split+1):(max.id.split+500)                                                 # Create list of numbers starting from the latest one
 
 new.sites <- new.sites %>% filter(new_site == TRUE) %>%
-  mutate(a4_site_name_new = paste0(a2_district, "_", seq[1:nrow(.)]),                # create new site ID in column new_site_id of the cleaning log
-         issue = "Please double check the english and arabic name for this new site.") %>%
+  mutate(a4_site_name_new = paste0(a2_district, "_", seq[1:nrow(.)])) %>%       # create new site ID in column new_site_id of the cleaning log
   relocate(a4_site_name_new,	a4_site_name_new_en,	a4_site_name_new_ar, .after = "issue") %>%
   mutate(a4_site_name_new_ar=a4_other_site, a4_site_name_new_en=a4_other_site_translation)
 new.sites.uuid <- new.sites$uuid
 
-## Manually assign the new official name in English + Arabic
-save.new.sites(paste0("output/cleaning log/site name/new_sites_",today, ".xlsx"))
-browseURL(paste0("output/cleaning log/site name/new_sites_",today, ".xlsx"))                         # Manually enter the name of site in English and Arabic, and save the file with "_updated" at the end of the name
-
-## Read the updated sitename file
-file.new.site.updated <- "output/cleaning log/site name/new_sites_2021-06-14_updated.xlsx"
-new.sites.updated <- read.xlsx(file.new.site.updated)
-if (new.sites.updated %>% filter(is.na(a4_site_name_new_ar) | is.na(a4_site_name_new_en)) %>% nrow > 0){print("You didn't assign name in english and or Arabic for all new sites. Please redo the previous step.")}
-if (nrow(new.sites.updated)>0){print(paste0(nrow(new.sites.updated), " new sites will be added to the site masterlist."))}
-
 ## Update the masterlist with new sites entries + ID and available informations
-new.sites.master <- new.sites.updated %>%
+new.sites <- new.sites %>%
   left_join(response %>% select(uuid, a7_site_population_hh, a7_site_population_individual), by="uuid") %>%
   mutate(Partner_Name = agency, Sub_Dist_ID=a3_sub_district, Site_ID = a4_site_name_new, Site_Name=a4_site_name_new_en,
          Site_Name_In_Arabic=a4_site_name_new_ar, Latitude=a5_2_gps_latitude, Longitude=a5_1_gps_longitude, "#_of_total_Households"=as.numeric(a7_site_population_hh),
          Total_Site_Population=as.numeric(a7_site_population_individual)) %>% select(intersect(colnames(.), colnames(masterlist)))
 
 ## Adding the new sites in the existing site masterlist
-masterlist_updated <- masterlist %>% bind_rows(new.sites.master)                
-dir.create("output/masterlist", showWarnings = F)
-masterlist_updated %>% select(-any_of("Site_Name_In_Arabic_tidy")) %>% write.xlsx(paste0("output/masterlist/masterlist_", today,".xlsx"))
-
-## Now that response is cleaned, update the masterlist with new sites entries + ID and available informations (long/lat cleaned)
-# ## Create new sitename code for remaining sites
-# max.id.split <- masterlist$Site_ID %>% sub(".*?_", "",.) %>% as.numeric %>% max(na.rm = T) # Extract the highest number in site id in masterlist
-# latest_id <- masterlist$Site_ID[grepl(paste0("_", max.id.split), masterlist$Site_ID)]      # Extract the latest full ID
-# seq <- (max.id.split+1):(max.id.split+500)                                                 # Create list of numbers starting from the latest one
-# 
-# new_sites <- new_sites %>% 
-#   mutate(a4_site_name_new = paste0(a2_district, "_", seq[1:nrow(.)]),           # Create new site ID
-#          issue = paste0("Marked as 'other' because it is a new site. Will be added to master list with site ID: ", a4_site_name_new))
-# new.sites.uuid <- new_sites$uuid
-# 
-# ## Update sitename_log to add new site_name
-# sitename_log_updated <- sitename_log_updated %>%
-#   filter(!uuid %in% new.sites.uuid) %>%                                         # filter out new sites from sitename log updated
-#   bind_rows(new_sites)                                                          # Add new sites with the new attributed codes
-# sitename_log_updated %>% save.new.sites(filename.out = paste0("output/cleaning log/site name/site_name_log_", today, "_final.xlsx"))
-# browseURL(paste0("output/cleaning log/site name/site_name_log_", today, "_final.xlsx"))
-
-new_sites_master <- cleaning.log %>%
-  filter(variable == "a4_site_name") %>%
-  filter(new_site %in% c("TRUE", "T", TRUE, T)) %>%
-  left_join(response %>% select(uuid, a7_site_population_hh, a7_site_population_individual, a3_sub_district, a5_1_gps_longitude, a5_2_gps_latitude), by="uuid") %>%
-  mutate(Partner_Name = agency, Sub_Dist_ID=a3_sub_district, Site_ID = new_value, Site_Name=a4_site_name_new_en,
-         Site_Name_In_Arabic=a4_site_name_new_ar, Longitude=a5_1_gps_longitude, Latitude=a5_2_gps_latitude,"#_of_total_Households"=as.numeric(a7_site_population_hh),
-         Total_Site_Population=as.numeric(a7_site_population_individual)) %>% select(intersect(colnames(.), colnames(masterlist)))
-
-## Adding the new sites in the existing site masterlist
-masterlist_updated <- masterlist %>% bind_rows(new_sites_master)                
+masterlist_updated <- masterlist %>% bind_rows(new.sites)                
 dir.create("output/masterlist", showWarnings = F)
 masterlist_updated %>% select(-any_of("Site_Name_In_Arabic_tidy")) %>% write.xlsx(paste0("output/masterlist/masterlist_", today,".xlsx"))
 
@@ -201,3 +161,16 @@ final_dataset_external <- clean_data %>% select(-c("start", "end", "q0_1_enumera
                                                    "q0_3_organization_other", "a4_other_site", "a5_1_gps_longitude", "a5_2_gps_latitude", "b2_exu_fp_name", "b2_exu_fp_name", "b8_community_committee_fp_name", 
                                                    "b9_community_committee_fp_cell", "q0_3_organization", "q0_4_date", "b7_community_committee_in_place"), contains("number"))
 write.xlsx(final_dataset_external, paste0("./output/external/CCCM_SiteReporting_V2 External_",today,".xlsx"))    
+
+
+### ARCHIVED CODE
+
+# ## Not needed now as it's part of the main follow-up with partners Manually assign the new official name in English + Arabic
+# save.new.sites(paste0("output/cleaning log/site name/new_sites_",today, ".xlsx"))
+# browseURL(paste0("output/cleaning log/site name/new_sites_",today, ".xlsx"))                         # Manually enter the name of site in English and Arabic, and save the file with "_updated" at the end of the name
+# 
+# ## Read the updated sitename file
+# file.new.site.updated <- "output/cleaning log/site name/new_sites_2021-06-14_updated.xlsx"
+# new.sites.updated <- read.xlsx(file.new.site.updated)
+# if (new.sites.updated %>% filter(is.na(a4_site_name_new_ar) | is.na(a4_site_name_new_en)) %>% nrow > 0){print("You didn't assign name in english and or Arabic for all new sites. Please redo the previous step.")}
+# if (nrow(new.sites.updated)>0){print(paste0(nrow(new.sites.updated), " new sites will be added to the site masterlist."))}
