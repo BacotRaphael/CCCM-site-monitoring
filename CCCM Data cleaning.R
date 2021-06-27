@@ -74,7 +74,7 @@ for (file in files.cleaning.log){
 }
 
 ## Upload internal cleaning log [sitename/organisation name + easy gps changes]
-file.cleaning.log.internal <- "output/cleaning log/cleaning_log_int_all_2021-06-17.xlsx"
+file.cleaning.log.internal <- "output/cleaning log/cleaning_log_int_all_2021-06-27.xlsx"
 cleaning.log.int <- read.xlsx(file.cleaning.log.internal) %>% mutate_all(as.character)
 cleaning.log <- cleaning.log %>% bind_rows(cleaning.log.int)
 
@@ -83,17 +83,25 @@ duplicate.cl <- cleaning.log %>% group_by(uuid, variable) %>% filter(n()>1) %>% 
 
 ### Apply cleaning log changes to raw response file
 clean_data <- response
-for (n in seq_along(1:nrow(cleaning.log))){
-  col <- cleaning.log[n, "variable"]                                                                  # Get the name of the variable to be updated in response dataset
-  new_value <- cleaning.log[n, "new_value"]                                                           # Get the new value for this cleaning log entry
-  if (cleaning.log[n, "change"] %in% c("FALSE")) {new_value <- cleaning.log[n, "old_value"]} else if (cleaning.log[n, "change"] %in% c("TRUE")) {  # Tell to keep old value if new value is "confirmed"
-    new_value <- cleaning.log[n, "new_value"]}
-  if (col %in% colnames(clean_data)) {
-    clean_data[clean_data$uuid==cleaning.log[n,"uuid"], col] <- new_value                             # Assign new value to the variable in the dataframe response
+for (r in seq_along(1:nrow(cleaning.log))){
+  col <- cleaning.log[r, "variable"]                                                                  # Get the name of the variable to be updated in response dataset
+  new_value <- cleaning.log[r, "new_value"]                                                           # Get the new value for this cleaning log entry
+  if ((col %in% colnames(clean_data)) & (cleaning.log[r, "change"] %in% c("TRUE"))) {
+    clean_data[clean_data$uuid==cleaning.log[r,"uuid"], col] <- new_value                             # Assign new value to the variable in the dataframe response
   }
 }
 
-### Old piece of code to create new site IDs for new sites
+### Recode other responses as NA when relevant [sitename + organization other cleaning log entries have been kept out to keep cleaning log concise]
+for (r in seq_along(1:nrow(cleaning.log))){
+  col <- cleaning.log[r, "variable"]
+  new_value <- cleaning.log[r, "new_value"]                                     
+  if (col %in% c("a4_site_name")){var.other <- "a4_other_site"} else {var.other <- paste0(col, "_other")}
+  if ((var.other %in% colnames(clean_data)) & (cleaning.log[r, "change"] %in% c("TRUE")) & !is.na(new_value)) {
+    clean_data[clean_data$uuid==cleaning.log[r,"uuid"], var.other] <- NA        # Set other entry as NA when other has been recoded (i.e. new_value is not NA and change have been applied)
+  }
+}
+
+### Create new site IDs
 site.masterlist<-masterlist$Site_ID %>% unique                                  # Make sure all sites are on one sheet or consolidate on one sheet in masterlist
 
 new.sites <- cleaning.log %>%
@@ -161,16 +169,3 @@ final_dataset_external <- clean_data %>% select(-c("start", "end", "q0_1_enumera
                                                    "q0_3_organization_other", "a4_other_site", "a5_1_gps_longitude", "a5_2_gps_latitude", "b2_exu_fp_name", "b2_exu_fp_name", "b8_community_committee_fp_name", 
                                                    "b9_community_committee_fp_cell", "q0_3_organization", "q0_4_date", "b7_community_committee_in_place"), contains("number"))
 write.xlsx(final_dataset_external, paste0("./output/external/CCCM_SiteReporting_V2 External_",today,".xlsx"))    
-
-
-### ARCHIVED CODE
-
-# ## Not needed now as it's part of the main follow-up with partners Manually assign the new official name in English + Arabic
-# save.new.sites(paste0("output/cleaning log/site name/new_sites_",today, ".xlsx"))
-# browseURL(paste0("output/cleaning log/site name/new_sites_",today, ".xlsx"))                         # Manually enter the name of site in English and Arabic, and save the file with "_updated" at the end of the name
-# 
-# ## Read the updated sitename file
-# file.new.site.updated <- "output/cleaning log/site name/new_sites_2021-06-14_updated.xlsx"
-# new.sites.updated <- read.xlsx(file.new.site.updated)
-# if (new.sites.updated %>% filter(is.na(a4_site_name_new_ar) | is.na(a4_site_name_new_en)) %>% nrow > 0){print("You didn't assign name in english and or Arabic for all new sites. Please redo the previous step.")}
-# if (nrow(new.sites.updated)>0){print(paste0(nrow(new.sites.updated), " new sites will be added to the site masterlist."))}

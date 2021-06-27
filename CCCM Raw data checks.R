@@ -1,7 +1,7 @@
 # CCCM Site Monitoring Tool - Data Cleaning script
 # REACH Yemen - raphael.bacot@reach-initiative.org
 # V10
-# 17/06/2021
+# 27/06/2021
 
 rm(list=ls())
 setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
@@ -248,7 +248,7 @@ sitename_log_updated <- sitename_log_updated %>%
 ## Apply changes to sitename column a4_site_name for all straightforward perfect or partial matches (change=TRUE)
 ## Question: do we need to update the new name en and ar in response or useless?
 sitename_log_internal <- sitename_log_updated %>% filter(change %in% c("TRUE")) %>% mutate_all(as.character)
-for (r in nrow(sitename_log_internal)){
+for (r in seq_along(nrow(sitename_log_internal))){
   new_id <- sitename_log_internal[r, "a4_site_name_new"]
   new_name <- sitename_log_internal[r, "a4_site_name_new_en"]
   new_name_ar <- sitename_log_internal[r, "a4_site_name_new_ar"]
@@ -262,29 +262,15 @@ sitename_log <- sitename_log_updated %>%
   dplyr::select(uuid, agency, issue, a4_other_site, a4_site_name_new, a4_site_name_new_en, a4_site_name_new_ar, new_site, change) %>%
   mutate(area="other", variable = "a4_site_name", old_value = "other", check_id = "2", fix="Checked with partner", checked_by="ON") %>%
   dplyr::rename(new_value = a4_site_name_new) %>% select(all_of(col.cl), new_site, everything()) %>% mutate_all(as.character)
-sitename_log_external <- sitename_log %>% filter(!change %in% c("TRUE")) %>% mutate(comment=ifelse(new_site %in% c("TRUE"), "Update the column new_site with TRUE to confirm if this is a new site, and fill the column a4_site_name_new_en and a4_site_name_new_ar with the sitename in english and in arabic.", ""), new_site=gsub("TRUE","?", new_site))
+sitename_log_external <- sitename_log %>% filter(!change %in% c("TRUE")) %>% mutate(issue=ifelse(new_site %in% c("TRUE"), paste0(issue, ". Update the column new_site with TRUE to confirm if this is a new site, and fill the column a4_site_name_new_en and a4_site_name_new_ar with the sitename in english and in arabic."), issue), new_site=gsub("TRUE","?", new_site))
+sitename_log_internal <- sitename_log %>% filter(change %in% c("TRUE")) %>% mutate(issue="The sitename has been entered as other although it was part of the available choices.")
 
-cleaning.log <- cleaning.log %>% bind_rows(sitename_log_external)               # Add sitenames requiring partner feedback to cleaning log
-cleaning.log.internal <- cleaning.log.internal %>%                              # Add sitenames that have been internally updated to internal cleaning log for the record
-  bind_rows(sitename_log_internal)                    
+# Add sitenames requiring partner feedback to cleaning log
+cleaning.log <- cleaning.log %>% bind_rows(sitename_log_external)               
 
-# ## Create new sitename code for remaining sites
-# max.id.split <- masterlist$Site_ID %>% sub(".*?_", "",.) %>% as.numeric %>% max(na.rm = T) # Extract the highest number in site id in masterlist
-# latest_id <- masterlist$Site_ID[grepl(paste0("_", max.id.split), masterlist$Site_ID)]      # Extract the latest full ID
-# seq <- (max.id.split+1):(max.id.split+500)                                                 # Create list of numbers starting from the latest one
-# 
-# new_sites <- new_sites %>% 
-#   mutate(a4_site_name_new = paste0(a2_district, "_", seq[1:nrow(.)]),           # Create new site ID
-#          issue = paste0("Marked as 'other' because it is a new site. Will be added to master list with site ID: ", a4_site_name_new))
-# new.sites.uuid <- new_sites$uuid
-# 
-# ## Update sitename_log to add new site_name
-# sitename_log_updated <- sitename_log_updated %>%
-#   filter(!uuid %in% new.sites.uuid) %>%                                         # filter out new sites from sitename log updated
-#   bind_rows(new_sites)                                                          # Add new sites with the new attributed codes
-# sitename_log_updated %>% save.new.sites(filename.out = paste0("output/cleaning log/site name/site_name_log_", today, "_final.xlsx"))
-# browseURL(paste0("output/cleaning log/site name/site_name_log_", today, "_final.xlsx"))
-
+# Add sitenames that have been internally updated to internal cleaning log for the record
+cleaning.log.internal <- cleaning.log.internal %>% bind_rows(sitename_log_internal) 
+                     
 ## Check 3: Match q3 organization other names with kobo list
 ## 3.1. Do a partial match for Partner name in arabic from the external choice list
 choices.ngo <- choices %>% filter(list_name == "ngo") %>% select(-governorate, -list_name) %>% setNames(c("ngo_code", "ngo_name_en", "ngo_name_ar"))
@@ -353,7 +339,7 @@ ngo_log_final <- ngo_log_updated %>% filter(!uuid %in% new.ngos.uuid) %>% bind_r
 
 ## Apply changes to sitename column a4_site_name according to Partner's feedback.
 ## Question: do we need to update the new name en and ar in response or useless?
-for (r in nrow(ngo_log_updated)){
+for (r in seq_along(nrow(ngo_log_updated))){
   new_id <- ngo_log_updated[r, "q0_3_organization_new_code"]
   new_name <- ngo_log_updated[r, "q0_3_organization_new_name_en"]
   new_name_ar <- ngo_log_updated[r, "q0_3_organization_new_name_ar"]
@@ -548,7 +534,7 @@ gps_log_int <- check_gps %>% filter((flag ==T & internal.check == T) | (issue.ad
   select(uuid, matches("internal|flag|longitude|latitude|issue|clean")) 
 
 ## Apply changes on response file for straightforward gps corrections
-for (r in nrow(gps_log_int)){
+for (r in seq_along(nrow(gps_log_int))){
   lon_clean <- gps_log_int[r, "Longitude_clean"]
   lat_clean <- gps_log_int[r, "Latitude_clean"]
   response[response$uuid == gps_log_int[r, "uuid"], c("a5_1_gps_longitude", "a5_2_gps_latitude")] <- c(lon_clean, lat_clean)
@@ -724,7 +710,7 @@ if (nrow(check_eviction %>% filter(flag))==0){print("No issues with eviction and
 # Add to the cleaning log
 add.to.cleaning.log(check_eviction, check_id = "11", question.names = c("c3_tenancy_agreement_for_at_least_6_months", "f1_threats_to_the_site.eviction"), issue = "issue")
 
-### Check 12: Match and recode the other entries for if_ngo questions // under development
+### Check 12: Match and recode the other entries for if_ngo questions 
 check_service_provider <- response %>%
   select(uuid, matches("^if_ngo.*_other$")) %>%
   pivot_longer(cols = 2:ncol(.)) %>% filter(!is.na(value) & !(value %in% c("لااعلم", "لا اعلم"))) %>%
@@ -756,7 +742,7 @@ service_provider_log_int <- service_provider_log %>% filter(external==FALSE)
 # Manually updated the remaining other entries before adding to external cleaning log if necessary
 dir.create("output/cleaning log/service provider", showWarnings = F)
 service_provider_log_ext %>% write.xlsx(paste0("output/cleaning log/service provider/service_provider_other_", today, ".xlsx"))
-browseURL(paste0("output/cleaning log/service provider/service_provider_other_", today, ".xlsx"))
+# browseURL(paste0("output/cleaning log/service provider/service_provider_other_", today, ".xlsx"))
 
 # After updating the service provider other log, save it with _updated at the end of the file name / update filename below to read the updated file
 file.service.provider.log <- "output/cleaning log/service provider/service_provider_other_2021-06-27_updated.xlsx"
@@ -779,15 +765,17 @@ service_provider_log_recode <- service_provider_log_int %>% bind_rows(service_pr
 service_provider_log_final <- service_provider_log_other %>% bind_rows(service_provider_log_recode) %>%
   arrange(uuid, variable) 
 
-cleaning.log.internal <- cleaning.log.internal %>%                              # Add perfect matches to internal cleaning log
-  bind_rows(service_provider_log_final %>% filter(external==F) %>% select(-external)) 
+# Add perfect matches to internal cleaning log
+cleaning.log.internal <- cleaning.log.internal %>%                              
+  bind_rows(service_provider_log_final %>% filter(external==F) %>% select(-external))
 
-cleaning.log <- cleaning.log %>%                                                # Add remaining other entries that require feedback from partners to the cleaning log
-  bind_rows(service_provider_log_final %>% filter(external==T) %>% select(-external)) %>% arrange(uuid, variable)            
+# Add remaining other entries that require feedback from partners to the cleaning log
+cleaning.log <- cleaning.log %>%                                                
+  bind_rows(service_provider_log_final %>% filter(external==T) %>% select(-external))
 
 ## Apply changes for perfect matches - recode service provider with other entry and put other as NA
 service_provider_log_final_int <- service_provider_log_final %>% filter(external==F)
-for (r in nrow(service_provider_log_final_int)){
+for (r in seq_along(nrow(service_provider_log_final_int))){
   var <- service_provider_log_final_int[r, "variable"] %>% as.character
   new_value <- service_provider_log_final_int[r, "new_value"] %>% as.character
   response[response$uuid == as.character(service_provider_log_final_int[r, "uuid"]), var] <- new_value
@@ -799,18 +787,18 @@ for (r in nrow(service_provider_log_final_int)){
 #   mutate(old_value = as.character(old_value), check_id = "13") 
 # if (nrow(check_survey_length)==0){print(paste0("No survey has been flagged as too short/long with the given parameters entered."))} else {
 #   print("Some survey lengths are outside of the minimum and maximum duration parameters entered. To be checked.")}
-
 ## Add to the cleaning log
 # cleaning.log <- bind_rows(cleaning.log, check_survey_length)                  # time check commented for now as it seems not relevant
 
 cleaning.log <- cleaning.log %>%
-  mutate(change = NA, comment="", .after = "new_value") %>%                     # adding "change" column to be filled later (will determine whether changes must be done or not)
+  mutate(change = NA, comment="") %>%                                           # adding "change" column to be filled later (will determine whether changes must be done or not)
+  relocate(change, comment, .after="new_value") %>%
   arrange(agency, check_id, uuid)                                               
 
 ## Internal check for duplicate (To make sure you didn't do rubbish when copypasting code for a new logical check
 cleaning.log.dup <- cleaning.log %>%
   group_by(uuid, variable) %>% arrange(uuid, variable)  %>% mutate(n=n()) %>% filter(n>1)
-if ((t <- nrow(cleaning.log.dup)) > 0) {print(paste0("There are ", t, " duplicates in the cleaning log. You might have run the function 'add.to.cleaning.log' more than once for the same check or you have copy pasted some code without updating the 'check' argument of the function."))}
+if ((t <- nrow(cleaning.log.dup)) > 0) {print(paste0("There are ", t, " duplicates in the cleaning log. Check if it makes sense. You might have run the function 'add.to.cleaning.log' more than once for the same check or you have copy pasted some code without updating the 'check' argument of the function."))}
 
 ### Cleaning log for Partners
 ### Saves and put in format cleaning log 
@@ -822,7 +810,7 @@ save.follow.up.requests(cleaning.log, filename.out=paste0("output/cleaning log/c
 dir.create("output/cleaning log/partners", showWarnings = F, recursive = T)
 for (org in unique(cleaning.log$agency)) {
   cl.org <- cleaning.log %>% filter(agency == org) %>%
-    save.follow.up.requests(., filename.out=paste0("output/cleaning log/partners/cleaning_log_", org, "_", today, ".xlsx"))
+    save.follow.up.requests(., filename.out=paste0("output/cleaning log/partners/cleaning_log_", today, "_", org, ".xlsx"))
   print(paste0("cleaning log for ", org, " organization saved in folder output/cleaning log/partners"))
 }
 
@@ -843,7 +831,8 @@ response_to_share %>% write.xlsx(file = paste0("output/response_updated_", today
 dir.create("output/cleaning log/data partners", showWarnings = F, recursive = T)
 for (org in unique(response_to_share$q0_3_organization)){
   response_org <- response_to_share %>% filter(q0_3_organization==org) %>%
-    write.xlsx(paste0("output/cleaning log/data partners/response_", org, ".xlsx"))
+    write.xlsx(paste0("output/cleaning log/data partners/data_anonymised_", today, "_", org, ".xlsx"))
+  print(paste0("Anonymised dataset for ", org, " organization saved in folder output/cleaning log/data partners"))
 }
 
 ################################################################################
