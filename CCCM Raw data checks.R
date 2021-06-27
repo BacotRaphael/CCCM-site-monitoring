@@ -189,7 +189,7 @@ sitename_log <- check_sitename %>%
 # 2.1.5. Write all sitename matches in excel file (with duplicates to be filtered out manually)
 dir.create("output/cleaning log/site name", showWarnings = F, recursive = T)
 save.sitename.follow.up(sitename_log, filename.out = paste0("output/cleaning log/site name/site_name_log_", today, ".xlsx"))
-browseURL(paste0("output/cleaning log/site name/site_name_log_", today, ".xlsx"))
+# browseURL(paste0("output/cleaning log/site name/site_name_log_", today, ".xlsx"))
 
 ##### 2.2. Manual sitename log filtering & updating ############################
 
@@ -319,7 +319,7 @@ ngo_log <- check_ngo_names %>% select(uuid, matches("organization"), matches("_p
 # Write all sitename matches in excel file (with duplicates!)
 dir.create("output/cleaning log/organisation name", showWarnings = F, recursive = T)
 save.org.name.follow.up(ngo_log, filename.out = paste0("output/cleaning log/organisation name/org_name_log_", today, ".xlsx"))
-browseURL(paste0("output/cleaning log/organisation name/org_name_log_", today, ".xlsx"))
+# browseURL(paste0("output/cleaning log/organisation name/org_name_log_", today, ".xlsx"))
 
 ##### Organization name log updating ####################################################
 
@@ -724,15 +724,79 @@ if (nrow(check_eviction %>% filter(flag))==0){print("No issues with eviction and
 # Add to the cleaning log
 add.to.cleaning.log(check_eviction, check_id = "11", question.names = c("c3_tenancy_agreement_for_at_least_6_months", "f1_threats_to_the_site.eviction"), issue = "issue")
 
-
-### Check 12: Match and recode the other entries for if_ngo questions
+### Check 12: Match and recode the other entries for if_ngo questions // under development
 check_service_provider <- response %>%
-  mutate_at(vars(matches("^if_ngo.*_other$")), function(x) str_replace_all(x, setNames(choices.ngo$ngo_name_ar, choices.ngo$ngo_code))) %>% select(matches("^if_ngo.*_other$"))
+  select(uuid, matches("^if_ngo.*_other$")) %>%
+  pivot_longer(cols = 2:ncol(.)) %>% filter(!is.na(value) & !(value %in% c("لااعلم", "لا اعلم"))) %>%
+  mutate(ngo.name = gsub("\\(|\\)", "", tolower(value)), id = 1:nrow(.)) %>%
+  left_join(choices.ngo %>%                                                     # Matching organization other in arabic with ngo code and english names  
+              mutate(ngo_name_ar_lower = tolower(ngo_name_ar)), 
+            by = c("ngo.name" = "ngo_name_ar_lower"))
 
-### Check 12: Survey length
+check_service_provider2 <- check_service_provider %>% 
+  filter(is.na(ngo_code)) %>% select(-matches("ngo_")) %>%
+  mutate(ngo.name = gsub("^si$", "sol", ngo.name)) %>%                          # clean code for sol / si
+  left_join(choices.ngo %>% mutate(ngo_code_lower=str_trim(tolower(ngo_code))), # Trim whitespace + lower fhi360 code which is upper and has a space
+            by = c("ngo.name" = "ngo_code_lower")) %>%
+  mutate(ngo_code = ifelse(!is.na(ngo_name_en), ngo.name, NA))                  # extract ngo code when match worked 
+
+service_provider_log <- check_service_provider2 %>%                             # Bind together the perfect arabic matches with ngo code matches
+  bind_rows(check_service_provider %>% filter(!id %in% check_service_provider2$id)) %>%
+  relocate(id, .before = 1) %>% relocate(ngo_code, .before = "ngo_name_en") %>%
+  dplyr::rename(variable=name, old_value=value, value_cleaned=ngo.name, new_value=ngo_code) %>%
+  left_join(response %>% select(uuid, q0_3_organization, a4_site_name) %>%
+              dplyr::rename(agency=q0_3_organization, area=a4_site_name), by="uuid") %>%
+  mutate(issue="The organisation name is not recognized or there are multiple organisation names.", check_id = "12", fix="Checked with partner", checked_by="ON") %>%
+  select(all_of(col.cl), everything(), -value_cleaned, -id) %>%
+  mutate(external= ifelse(is.na(new_value), T, F), new_org="")                  # flag as external issues with no perfect match + add column to flag new organizations
+
+service_provider_log_ext <- service_provider_log %>% filter(external)
+service_provider_log_int <- service_provider_log %>% filter(external==FALSE)
+
+# Manually updated the remaining other entries before adding to external cleaning log if necessary
+dir.create("output/cleaning log/service provider", showWarnings = F)
+service_provider_log_ext %>% write.xlsx(paste0("output/cleaning log/service provider/service_provider_other_", today, ".xlsx"))
+browseURL(paste0("output/cleaning log/service provider/service_provider_other_", today, ".xlsx"))
+
+# After updating the service provider other log, save it with _updated at the end of the file name / update filename below to read the updated file
+file.service.provider.log <- "output/cleaning log/service provider/service_provider_other_2021-06-27_updated.xlsx"
+service_provider_log_ext_updated <- read.xlsx(file.service.provider.log) %>% 
+  mutate_all(as.character) %>%
+  mutate(external=ifelse(new_value %in% choices.ngo$ngo_code, F, T),            # flag as non external follow-up when matching has been done manually with a ngo code from the list
+         issue=ifelse(is.na(new_org), issue, ifelse(new_org=="TRUE", "No matching organization has been found. Is this a new organization?", issue))) 
+
+service_provider_log_int <- service_provider_log_int %>%                        # Add changes done internally to internal cleaning log
+  bind_rows(service_provider_log_ext_updated %>% filter(external==FALSE)) %>%
+  mutate(issue = "Service provider organization has been marked as 'other' although it is part of the available choices.")
+service_provider_log_ext <- service_provider_log_ext_updated %>% filter(external==TRUE)
+
+## reformat cleaning log to include recode question with the other entry
+service_provider_log_other <- service_provider_log_int %>% bind_rows(service_provider_log_ext) %>%
+  mutate(new_value = ifelse(!is.na(new_value), NA, new_value))
+service_provider_log_recode <- service_provider_log_int %>% bind_rows(service_provider_log_ext) %>%
+  mutate(variable = gsub("_other", "", variable), old_value = "other")  
+
+service_provider_log_final <- service_provider_log_other %>% bind_rows(service_provider_log_recode) %>%
+  arrange(uuid, variable) 
+
+cleaning.log.internal <- cleaning.log.internal %>%                              # Add perfect matches to internal cleaning log
+  bind_rows(service_provider_log_final %>% filter(external==F) %>% select(-external)) 
+
+cleaning.log <- cleaning.log %>%                                                # Add remaining other entries that require feedback from partners to the cleaning log
+  bind_rows(service_provider_log_final %>% filter(external==T) %>% select(-external)) %>% arrange(uuid, variable)            
+
+## Apply changes for perfect matches - recode service provider with other entry and put other as NA
+service_provider_log_final_int <- service_provider_log_final %>% filter(external==F)
+for (r in nrow(service_provider_log_final_int)){
+  var <- service_provider_log_final_int[r, "variable"] %>% as.character
+  new_value <- service_provider_log_final_int[r, "new_value"] %>% as.character
+  response[response$uuid == as.character(service_provider_log_final_int[r, "uuid"]), var] <- new_value
+}
+
+### Check 13: Survey length 
 ### Check lenght of the survey, 15 = minimum, 60 = maximum (can be changed)
 # check_survey_length <- check.time(response, duration_threshold_lower = 15, duration_threshold_upper = 60) %>%
-#   mutate(old_value = as.character(old_value), check_id = "12") 
+#   mutate(old_value = as.character(old_value), check_id = "13") 
 # if (nrow(check_survey_length)==0){print(paste0("No survey has been flagged as too short/long with the given parameters entered."))} else {
 #   print("Some survey lengths are outside of the minimum and maximum duration parameters entered. To be checked.")}
 

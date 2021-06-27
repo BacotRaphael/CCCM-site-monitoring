@@ -60,7 +60,7 @@ priority.need.checks <- function(df){
     mutate(issue=paste0(service.level.var, " reported as adequate but ", priority.need, " cited as top three priority need. To be checked."))
   for (var in service.level.var){
     check_var <- priority.check(df, var)
-    add.to.priority.log(check_var, check_id = paste0("check_priority_", var), question.names=c(var, col.priority.needs), issue = "issue")
+    add.to.cleaning.log(check_var, check_id = paste0("check_priority_", var), question.names=c(var, col.priority.needs), issue = "issue")
   }
   cleaning.log <<- cleaning.log %>% filter(!(grepl("check_priority", check_id) & is.na(old_value)))
   adequacy_log <<- cleaning.log %>% filter(grepl("check_priority", check_id))
@@ -200,6 +200,23 @@ partial_join <- function(x, y, pattern_x, by_y){
   z <- lapply(z, function(x) paste(x, collapse="|")) %>% unlist                 # collapse all substring together with "|" statements
   idy_y <- sapply(z, function(s) {                                              # Return the indice for any match from any of the substring in the sitename
     if (grepl("NA|\\(|\\)", s)) {s <- gsub("NA", "", s)}                            # If there is a NA, clean it
+    if (s == "" | is.na(s)) {s} else {                                          # If there is a blank of NA, just return NA
+      res <- grep(s, y[[by_y]])}})
+  idx_x <- sapply(seq_along(idy_y), function(i) rep(i, length(idy_y[[i]])))     # calls the corresponding row numbers in x to join them to y (repeats the x match as many time as partial match in y)
+  df <- dplyr::bind_cols(x[unlist(idx_x), , drop = F],                          # calls all partial matches rows of x, repeating the multiple matches if necessary
+                         y[unlist(idy_y), , drop = F]) %>%                      # calls the partially matching rows of y => bind_cols creates the output dataframe
+    select(all_of(pattern_x), all_of(by_y), everything())
+  df <- plyr::rbind.fill(df, x[-unlist(idx_x), , drop = F])                     # add all other non matching lines 
+  
+  return(df)
+}
+
+partial_join_ngo <- function(x, y, pattern_x, by_y){
+  z <- x[[pattern_x]] %>% str_squish %>% str_split(" |\\|,|\\+")                                      # splits the sitename with space as separator to see if any part of the sitename has a corresponding match
+  z <- lapply(z, function(x) paste(x, collapse="|")) %>% unlist %>%
+    gsub("\\|\\|\\|", "\\|", .) %>% gsub("\\|\\|", "\\|", .) %>% gsub(",", "",.)# collapse all substring together with "|" statements
+  idy_y <- sapply(z, function(s) {                                              # Return the indice for any match from any of the substring in the sitename
+    if (grepl("NA", s)) {s <- gsub("NA", "", s)}                                # If there is a NA, clean it
     if (s == "" | is.na(s)) {s} else {                                          # If there is a blank of NA, just return NA
       res <- grep(s, y[[by_y]])}})
   idx_x <- sapply(seq_along(idy_y), function(i) rep(i, length(idy_y[[i]])))     # calls the corresponding row numbers in x to join them to y (repeats the x match as many time as partial match in y)
