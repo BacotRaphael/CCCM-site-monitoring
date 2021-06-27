@@ -11,10 +11,8 @@ today <- Sys.Date()
 if (!require("pacman")) install.packages("pacman")
 pacman::p_load(tidyverse, data.table, openxlsx, reshape2,sf, leaflet, readxl, withr, mapview, randomcoloR, arabicStemR)
 p_load_gh("mabafaba/cleaninginspectoR","impact-initiatives-research/clog")
-# install.packages("arabicStemR")                                                 # To transliterate in english the arabic sitenames
 
 ## Source
-source("./R/cleanHead.R")
 source("./R/check_time_RBA.R")
 source("./R/utils.R")
 
@@ -47,8 +45,7 @@ response <- response %>%
   mutate(id = 1:n(), .before = "deviceid") %>%
   dplyr::rename(index = '_index', uuid = '_uuid') %>%
   setNames(tolower(colnames(.)))                                                # reduce to all lowercase
-
-col.raw <- colnames(response)
+col.raw <- colnames(response)                                                   # Record original raw data columns for intermediate dataset sharing 
 
 ## Load Kobo Tool
 tool<- if (tool.version == "V1") {read.xlsx(tool.filename.v1, sheet = "survey")} else if(tool.version == "V2") {read.xlsx(tool.filename.v2, sheet = "survey")} else {print("invalid tool entered, should be either V1 or V2")}
@@ -797,7 +794,7 @@ cleaning.log <- cleaning.log %>%
 
 ## Internal check for duplicate (To make sure you didn't do rubbish when copypasting code for a new logical check
 cleaning.log.dup <- cleaning.log %>%
-  group_by(uuid, variable) %>% arrange(uuid, variable)  %>% mutate(n=n()) %>% filter(n>1)
+  group_by(uuid, variable, check_id) %>% arrange(uuid, variable)  %>% mutate(n=n()) %>% filter(n>1)
 if ((t <- nrow(cleaning.log.dup)) > 0) {print(paste0("There are ", t, " duplicates in the cleaning log. Check if it makes sense. You might have run the function 'add.to.cleaning.log' more than once for the same check or you have copy pasted some code without updating the 'check' argument of the function."))}
 
 ### Cleaning log for Partners

@@ -1,7 +1,7 @@
 # CCCM Site Monitoring Tool - Data Cleaning script
 # REACH Yemen - raphael.bacot@reach-initiative.org
-# V6
-# 15/06/2021
+# V7
+# 27/06/2021
 
 rm(list=ls())
 setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
