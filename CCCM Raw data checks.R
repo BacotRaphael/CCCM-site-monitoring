@@ -64,6 +64,12 @@ masterlist <- read.xlsx(sitemasterlist.filename) %>%
            skip_absent = TRUE) %>%
   mutate_at(vars(-matches("_Households|_Population|_IDPs")), as.character)      # mutate all names and IDs as character to enable matching
 
+## Load pcodes
+# file.pcode <- "data/yem_admin_ochayemen_20191002.xlsx"
+# pcodes <- read.xlsx(file.pcode, sheet="admin3")
+file.pcode <- "R/pcodes/admin_list.csv"
+pcodes <- read.csv(file.pcode)
+
 ## Anonymize dataset - Update sensible columns vector by adding all new headers containing sensible information that is not needed for data followup.
 # It will ignore non matching columns, just put all columns from both tools
 sensible.columns <- c("deviceid", "subscriberid", "imei", "phonenumber", "q0_1_enumerator_name", "q0_2_gender", "q1_1_key_informant_name",
@@ -386,6 +392,7 @@ if ((t <- nrow(survey_wrong_tool)) > 0){print(paste0(t, " site may have used the
 wrong_survey_summary <- survey_wrong_tool %>% select(uuid, matches("a3_sub_district|Pcode|admin3Name|issue$|flag|tool"))
 
 ## If doubt => ask under which area of control is this site?
+## mutate(issue (ifelse(wrongtool => "which area of control?")))
 survey_version_log <- survey_wrong_tool %>%
   dplyr::rename(agency=q0_3_organization, area=a4_site_name) %>%
   mutate(variable="tool version", old_value=tool.version, new_value=tool, fix="Checked with partner", checked_by="ON", check_id="4.0") %>%
@@ -395,8 +402,13 @@ survey_version_log <- survey_wrong_tool %>%
 cleaning.log <- cleaning.log %>% bind_rows(survey_version_log)
 
 ### Check 4: GPS Coordinates check
+## Initial check 4_admin - Ensuring that a valid Pcode is entered at subdistrict level
+check_admin <- response %>% 
+  mutate(flag=ifelse(is.na(a3_sub_district) | !a3_sub_district %in% pcodes$admin3Pcode, T, F),
+         issue=ifelse(flag, "There is no entered sub-district or it is not a recognized Pcode, Please update", ""))
+add.to.cleaning.log(check_admin, check_id = "4_admin", question.names = c("a3_sub_district"), issue = "issue")
 
-## 0 Importing layers
+## 0. Importing layers
 adm1 <- st_read(dsn = "data/shapes/yem_adm_govyem_cso_ochayemen_20191002_GDB.gdb", layer="yem_admbnda_adm1_govyem_cso")
 adm2 <- st_read(dsn = "data/shapes/yem_adm_govyem_cso_ochayemen_20191002_GDB.gdb", layer="yem_admbnda_adm2_govyem_cso")
 adm3 <- st_read(dsn = "data/shapes/yem_adm_govyem_cso_ochayemen_20191002_GDB.gdb", layer="yem_admbnda_adm3_govyem_cso") # Importing the sbd boundaries
@@ -405,7 +417,7 @@ adm3_loc <- st_read(dsn = "data/shapes/yem_adm_govyem_cso_ochayemen_20191002_GDB
 #   dplyr::rename(admin1Pcode = admin1pcode, admin2Pcode = admin2pcode, admin3Pcode = admin3pcode, admin4Pcode = admin4pcode)
 # admin4 <- admin4 %>% mutate(geometry = mapply(c, longitude, latitude, SIMPLIFY = F) %>% map(st_point)) %>% filter(!(longitude == 0 | latitude == 0))
 
-# 1 Joining site location to boundaries
+# 1. Joining site location to boundaries
 df.loc <- response %>% mutate(longitude = a5_1_gps_longitude %>% as.numeric,
                               latitude = a5_2_gps_latitude %>% as.numeric ,
                               SHAPE = mapply(c, longitude, latitude, SIMPLIFY = F) %>% map(st_point)) %>%
@@ -414,16 +426,15 @@ df.loc <- response %>% mutate(longitude = a5_1_gps_longitude %>% as.numeric,
            abs(longitude) < 180, abs(latitude) < 90) %>%                        # Filter out non valid gps coordinates and NAs. 
   select(longitude, latitude, a4_site_name)
 
-# 2 Plotting map of non cleaned location, setting as NA any non valid DD GPS coordinate
+# 2. Plotting map of non cleaned location, setting as NA any non valid DD GPS coordinate
 m <- leaflet() %>% addTiles() %>%
   addMarkers(data = df.loc, lng = ~longitude, lat = ~latitude,
              label = paste0("Site name: ", df.loc$a4_site_name, ", lon: ", df.loc$longitude, ", lat: ", df.loc$latitude)) 
 m
 
-## Sanitizing gps coordinates entries: Convert to DD when possible and flag gps coordinates syntax issues 
+# 3. Sanitizing gps coordinates entries: Convert to DD when possible and flag gps coordinates syntax issues 
 # Manually gsub ، as it doesn't work properly within the clean.invalid.char.gps function
 response <- response %>% mutate_at(vars(matches("longitude|latitude")), ~as.character(gsub("،", ".",.)))
-
 response <- clean.invalid.char.gps(response, "a5_1_gps_longitude", "a5_2_gps_latitude")
 response <- sanitize.gps(response, "a5_1_gps_longitude", "a5_2_gps_latitude")
 
@@ -432,85 +443,23 @@ check.not.cleaned <- response %>% select(matches("longitude|latitude|issue|_clea
 # Check the automatically cleaned lon/lat entries
 check.cleaned <- response %>% select(matches("longitude|latitude|issue|_clean|flag_")) %>% filter(!is.na(Longitude_clean) | !is.na(Latitude_clean) & (!is.na(issue_lon) | !is.na(issue_lat)))
 
-## Flag GPS coordinates that lies in a different sub-district than the one entered - [st_intersection]
-response <- response %>%                                                        # Match admin3 pcode with corresponding english name 
-  left_join(adm3 %>% select(admin3Pcode, admin3Name_en) %>% dplyr::rename(admin3Name_en_df=admin3Name_en), by = c("a3_sub_district" = "admin3Pcode"))
+# 4. Second GPS check and cleaning step - Join valid GPS coordinates with corresponding districts/subdistrict, flag inconsistencies between GPS and recorded sub-district
+gps.check.admin()                                                               # function defined in utils.R
 
-empty.gps.sites <- response %>%
-  filter(is.na(Longitude_clean) | is.na(Latitude_clean) | Longitude_clean == 0 | Latitude_clean == 0)
-
-### Check in which admin boundaries the GPS location is supposed to fall
-response.sf <- response %>%
-  dplyr::mutate(admin2Pcode_df = a2_district,
-                admin3Pcode_df = a3_sub_district) %>%                           # Rename (sub)district column to know it shows district information as in survey (df)               
-  filter(!is.na(Longitude_clean) & !is.na(Latitude_clean) &
-           Longitude_clean != 0, Latitude_clean != 0) %>%
-  mutate(SHAPE = mapply(c, as.numeric(Longitude_clean), as.numeric(Latitude_clean), SIMPLIFY = F) %>%
-           map(st_point)) %>%                                                   # Add a geometry column to the response dataframe
-  st_sf(crs = 4326, sf_column_name = "SHAPE")
-response.df <- response.sf %>% st_drop_geometry                                 # Drop the geometry column to be able to do intersect/non-intersection between the two
-
-## Get match original data with the sbd boundaries corresponding to the entered GPS location
-valid.gps.sf <- st_intersection(response.sf, adm3) %>% st_as_sf()               # will subset to only keep gps entries falling in adm3 existing boundaries [nrows will be lower or equal to original file nrows]
-valid.gps.df <- valid.gps.sf %>% st_drop_geometry %>%                           # Drop the geometry column to be able to do intersect/non-intersection between the two
-  select(intersect(colnames(valid.gps.sf), colnames(response.df)))              # select the original df's columns to be able to use setdiff()
-
-## => list the GPS location that falls outside of Yemen boundaries // Here we used the cleaned gps coordinates so it should be zero.
-##  => Displays the gps entries outside of all adm3 boundaries [shows rows that disappeared when doing st_instersect i.e.]
-non.valid.gps.entries <- 
-  setdiff(response.df %>% select(intersect(colnames(response.df), colnames(valid.gps.df))),
-          valid.gps.df) 
-response.df <- response.df %>%
-  mutate(issue.gps = ifelse(uuid %in% non.valid.gps.entries$uuid,
-                            "The gps location falls outside of Yemen boundaries",
-                            issue.gps))
-
-## => list all entries that have wrong admin names [column a2_district in original data not corresponding to the boundaries in which GPS location falls]
-## Can add this after joining the admin level from site_name list
-valid.gps.sf <- valid.gps.sf %>%
-  mutate(issue.gps = ifelse(admin3Pcode_df != admin3Pcode,
-                            "The sub-district name entered is not corresponding to the gps location entered",
-                            issue.gps))
-response.df <- response.df %>%
-  left_join(valid.gps.sf %>% st_drop_geometry %>%
-              select(uuid, admin2Pcode, admin2Name_en, admin3Pcode, admin3Name_en) %>% 
-              rename_at(vars(-matches("uuid")), ~paste0(., ".gps.matched")), by = "uuid")
-response.df <- response.df %>%
-  mutate(issue.admin3 = ifelse(is.na(admin3Pcode.gps.matched), "",
-                               ifelse(admin3Pcode.gps.matched != admin3Pcode_df,
-                                      "The sub-district name entered is not corresponding to the gps location entered",
-                                      "")))
-response.with.gps <- valid.gps.sf %>% 
-  bind_rows(non.valid.gps.entries %>%
-              left_join(response.sf %>% select(a5_1_gps_longitude, a5_2_gps_latitude, SHAPE),
-                        by = c("a5_1_gps_longitude", "a5_2_gps_latitude"))) 
-
-## Test map to display gps points that have issues  
-df.adm2 <- adm2 %>% st_join(response.with.gps %>% st_as_sf() %>%
-                              select(issue.gps)) %>%
-  mutate(has.gps.issue = ifelse(!is.na(issue.gps), 1, 0))
+## Map to display gps points that have issues  
+df.adm2 <- adm2 %>% st_join(response.with.gps %>% st_as_sf() %>% select(issue.gps)) %>% mutate(has.gps.issue = ifelse(!is.na(issue.gps), 1, 0))
 df.adm_loc <- response.with.gps %>% filter(!is.na(issue.gps)) %>% st_as_sf()
 pal.adm2 <- function(x) return(ifelse(x!=0, "indianred", "ghostwhite"))
 
-# icon.blue <- makeAwesomeIcon(icon= 'flag', markerColor = 'blue', iconColor = 'black')
-# icon.red <- makeAwesomeIcon(icon = 'flag', markerColor = 'red', library='fa', iconColor = 'black')
-
-map <- leaflet() %>%
+map <- leaflet() %>% addTiles() %>%
   addPolygons(data=df.adm2, color = "#B5B5B5", weight = 2, opacity = 0.5,
               highlightOptions = highlightOptions(color = "white", weight = 2), fillOpacity = 0.5,
-              fillColor = ~pal.adm2(df.adm2$has.gps.issue),
-              label = df.adm2$admin2Name_en) %>%
-  # addAwesomeMarkers(data = df.adm_loc, group = "All", icon = icon.blue,
-  #                   label = paste0("Site name: ", df.adm_loc$a4_site_name," - Actual sub-district according to GPS location is: ", df.adm_loc$admin3Name_en)) %>%
-  # addAwesomeMarkers(data = df.adm_loc %>% filter(admin3Name_en_df!=admin3Name_en), group = "Non matching GPS", icon = icon.red,
-  #                   label = paste0("Site name: ", df.adm_loc$a4_site_name," - The admin name entered in dataset is ", df.adm_loc$admin3Name_en_df, ",\r\nactual sub-district according to GPS location is: ", df.adm_loc$admin3Name_en)) %>%
+              fillColor = ~pal.adm2(df.adm2$has.gps.issue), label = df.adm2$admin2Name_en) %>%
   addMarkers(data = df.adm_loc, group = "All",
              label = paste0("Site name: ", df.adm_loc$a4_site_name," - The admin name entered in dataset is ", df.adm_loc$admin3Name_en_df, ",\r\nactual district according to GPS location is: ", df.adm_loc$admin3Name_en)) %>%
   addMarkers(data = df.adm_loc %>% filter(admin3Name_en_df!=admin3Name_en), group = "Non matching GPS",
              label = paste0("Site name: ", df.adm_loc$a4_site_name," - The admin name entered in dataset is ", df.adm_loc$admin3Name_en_df, ",\r\nactual district according to GPS location is: ", df.adm_loc$admin3Name_en)) %>%
-  addTiles() %>% 
-  addLayersControl(baseGroups = c("All", "Non matching"), position =  "bottomleft",
-    options = layersControlOptions(collapsed = FALSE))
+  addLayersControl(baseGroups = c("All", "Non matching"), position =  "bottomleft", options = layersControlOptions(collapsed = FALSE))
 
 map                                                                             # Display map
 # withr::with_dir("./output/", map %>% mapshot(url="sitemap_cleaned_gps.html"))    # Export map as html file // uncomment if you want it as html, but it takes a while so commented so far
@@ -527,7 +476,7 @@ check_gps <- response.df %>%
          .before = "q0_3_organization_other")
 
 ## Separate internal gps cleaning log and external requiring Partner's feedback + small formatting changes for non flagged gps coordinates
-gps_log_int <- check_gps %>% filter((flag ==T & internal.check == T) | (issue.admin3=="" & issue.gps=="")) %>%
+gps_log_int <- check_gps %>% filter(flag ==T & internal.check == T) %>%
   select(uuid, matches("internal|flag|longitude|latitude|issue|clean")) 
 
 ## Apply changes on response file for straightforward gps corrections
@@ -538,17 +487,16 @@ for (r in seq_along(nrow(gps_log_int))){
 }
 
 ## Add internal and external gps issues
-add.to.cleaning.log(checks = check_gps, check_id = "4",
-                    question.names = c("a3_sub_district", "a5_1_gps_longitude", "a5_2_gps_latitude"), 
-                    issue = "issue",
-                    add.col = c("Longitude_clean", "Latitude_clean", "admin3Pcode.gps.matched", "admin3Name_en_df", "admin3Name_en.gps.matched", "internal.check"))
+add.to.cleaning.log.gps(checks = check_gps, check_id = "4",
+                        question.names = c("a3_sub_district", "a5_1_gps_longitude", "a5_2_gps_latitude"), 
+                        issue = "issue",
+                        add.col = c("Longitude_clean", "Latitude_clean", "admin3Pcode.gps.matched", "admin3Name_en_df", "admin3Name_en.gps.matched", "internal.check"))
 cleaning.log <- cleaning.log %>%                                                # only keep sub-district feedback when GPS falls outside of admin3 / could keep it for all (outside of ye / lon/lat switched) 
   filter(!(variable == "a3_sub_district" &
              !grepl("The sub-district name entered is not corresponding to the gps location entered", issue))) %>%
   mutate(new_value =                                                            # replace new_value in cleaning log by pre-cleaned value
            ifelse(variable == "a5_1_gps_longitude", Longitude_clean,
                   ifelse(variable == "a5_2_gps_latitude", Latitude_clean, new_value)))
-
 
 ## Filter out internal gps checks and append them to the internal cleaning log
 cleaning.log.internal <- cleaning.log.internal %>% bind_rows(cleaning.log %>% filter(internal.check))
@@ -575,7 +523,7 @@ cleaning.log <- cleaning.log %>% bind_rows(check_outliers)
 ## The above function will add all priority needs check identified in priority_need_log to the existing cleaning log
 cleaning.log <- cleaning.log %>% filter(!grepl("check_priority", check_id))     # To clear out duplicates in case you run the function priority.need.check more than once
 priority.need.checks(response) 
-adequacy_log %>% view                                                           # priority need log is stored in this dataframe
+# adequacy_log %>% view                                                           # priority need log is stored in this dataframe
 
 if(nrow(adequacy_log)==0) {print("No issues across avilability and service provisions have been detected. The dataset seems clean.")} else {
   print("Issues across avilability and service provisions have been detected. To be checked")}
@@ -613,24 +561,11 @@ if (nrow(phone_log)==0) {print("No issues with phone numbers. The dataset seems 
 # Add phone issues to the general cleaning log
 cleaning.log <- bind_rows(cleaning.log, phone_log)                               
 
-### Check 7.old: Ensure that formal sites have more than 20 HH
-# check_formal <- response %>%
-#   mutate(flag = ifelse((a9_formal_informal == "formal" & as.numeric(a7_site_population_hh) < 20), T, F),
-#          issue = ifelse(flag, "The site has been reported as formal but reported number of households is below 20. To be checked", "")) %>%
-#   dplyr::rename(agency=q0_3_organization, area=a4_site_name)
-# 
-# if (nrow(check_formal %>% filter(flag))==0){print("Formal site population size check not needed. The dataset seems clean.")} else {
-#   print("Formal site population size check needed. Some site with less than 20 HH have been reported as formal. To be checked")}
-# 
-# # Add to the cleaning log
-# add.to.cleaning.log(check_formal,  check_id = "7.0", question.names = c("a9_formal_informal", "a7_site_population_hh"), issue = "issue")
-
 ### Check 7: Check that collective centre/location/Urban IDP displaced location is not a makeshift / emergency / transitional / open-air type of shelter
 check_sitetype <- response %>%
   mutate(flag = ifelse(((c1_type_of_site == "collective_centre" | c1_type_of_site == "location" | c1_type_of_site == "Urban_displaced_IDP_location") & 
                           (c9_primary_shelter_type == "emergency_shelter" | c9_primary_shelter_type == "makeshift_shelter" | c9_primary_shelter_type == "transitional_shelter" | c9_primary_shelter_type == "open_air_no_shelter")), T, F),
-         issue = ifelse(flag, "Primary shelter type marked as 'makeshfit', 'emergency', 'transitional', or 'open-air' although type of site was identified as 'Collective centre', 'Location', or 'Urban displaced IDP location'.", "")) %>%
-  dplyr::rename(agency=q0_3_organization, area=a4_site_name)
+         issue = ifelse(flag, "Primary shelter type marked as 'makeshfit', 'emergency', 'transitional', or 'open-air' although type of site was identified as 'Collective centre', 'Location', or 'Urban displaced IDP location'.", ""))
 
 if (nrow(check_sitetype %>% filter(flag))==0){print("Site type checks not needed. The dataset seems clean.")} else {
   print("Some collective centres/location/IDP urban displaced location have been reported as makeshift or emergency or transitional or open-air type of shelter. To be checked.")}
@@ -644,8 +579,7 @@ check_settlement_type <- response %>%
   mutate(flag = ifelse((c1_type_of_site == "spontaneous_settlement") &
                          (c9_primary_shelter_type %in% c("host_family_house_apartment", "rented_house_appartment", "public_building")),
                        T, F),
-         issue = ifelse(flag, "Primary shelter type marked as 'Host family house appartment', 'Rented house appartment' or 'Public building' although type of site was identified as 'Spontaneous settlement", "")) %>%
-  dplyr::rename(agency=q0_3_organization, area=a4_site_name)
+         issue = ifelse(flag, "Primary shelter type marked as 'Host family house appartment', 'Rented house appartment' or 'Public building' although type of site was identified as 'Spontaneous settlement", ""))
 
 if (nrow(check_settlement_type %>% filter(flag))==0){print("Site type checks not needed. The dataset seems clean.")} else {
   print("Some spontaneous settlements have been reported as 'Host family house appartment', 'Rented house appartment' or 'Public building' type of shelter. To be checked.")}
@@ -656,8 +590,7 @@ add.to.cleaning.log(check_settlement_type, check_id = "7.1", question.names = c(
 ### Check 8: Check that sites marked as type 'location" do not have more than 5 HH 
 check_location <- response %>%    
   mutate(flag = ifelse((c1_type_of_site == "location" &  a7_site_population_hh > 5), T, F),
-         issue = ifelse(flag, "Site type 'Location' can usually be only selected for IDP sites housing less than 5 HHs in ONE building.", "")) %>%
-  dplyr::rename(agency=q0_3_organization, area=a4_site_name)
+         issue = ifelse(flag, "Site type 'Location' can usually be only selected for IDP sites housing less than 5 HHs in ONE building.", ""))
 
 if (nrow(check_location %>% filter(flag))==0){print("Site type 'Location' checks not needed. The dataset seems clean.")} else {print("Some 'locations' have been reported to house more than 5 HHs. To be checked.")}          
 
@@ -667,8 +600,7 @@ add.to.cleaning.log(check_location, check_id = "8", question.names = c("c1_type_
 ### Check 9: Waste disposal cannot be "non-existent" if they selected flush latrines
 check_waste_disposal <- response %>% 
   mutate(flag = ifelse((waste_disposal_services == "non_existant" & c10_primary_latrine_type == "flush_latrine_to_tank_sewage_system_pit"), T, F),
-         issue = ifelse(flag, "Waste disposal marked as 'non-existant' although  'flush latrines' was selected as primary latrine type", "")) %>%
-  dplyr::rename(agency=q0_3_organization, area=a4_site_name)
+         issue = ifelse(flag, "Waste disposal marked as 'non-existant' although  'flush latrines' was selected as primary latrine type", ""))
 
 if (nrow(check_waste_disposal %>% filter(flag))==0){print("Waste disposal system checks not needed. The dataset looks clean.")} else {
   print("Some sites have reported having lush latrines while reporting waste disposal as non-existent. To be checked")}
@@ -686,8 +618,7 @@ check_adequate_wash <- response %>%
                                                          c8_primary_water_source == "illegal_connection_to_piped_network" |
                                                          c8_primary_water_source == "unprotected_well" |
                                                          c8_primary_water_source == "surface_water")), T, F),
-         issue = ifelse(flag, "WASH services identified as adequate although water source or primary latrine type was marked as unsafe or unprotected", "")) %>%
-  dplyr::rename(agency=q0_3_organization, area=a4_site_name)
+         issue = ifelse(flag, "WASH services identified as adequate although water source or primary latrine type was marked as unsafe or unprotected", ""))
 
 if (nrow(check_adequate_wash %>% filter(flag))==0){print("No issues with adequacy of wash services has been detected. The dataset seems clean.")} else {
   print("Some sites identified WASH services as adequate although water source or primary latrine type was marked as unsafe or unprotected. To be checked.")}
@@ -698,8 +629,7 @@ add.to.cleaning.log(check_adequate_wash, check_id = "10", question.names = c("wa
 ### Check 11: Eviction risk should not be reported if there is a tenanacy agreement
 check_eviction <- response %>%
   mutate(flag = ifelse((c3_tenancy_agreement_for_at_least_6_months == "yes" & f1_threats_to_the_site.eviction == 1), T, F),
-         issue = ifelse(flag, "Eviction was identied as a risk although the site holds a tennacy agreement", "")) %>%
-  dplyr::rename(agency=q0_3_organization, area=a4_site_name)
+         issue = ifelse(flag, "Eviction was identied as a risk although the site holds a tennacy agreement", ""))
 
 if (nrow(check_eviction %>% filter(flag))==0){print("No issues with eviction and type of tennacy has been detected. The dataset seems clean.")} else {
   print("For some sites, eviction was identied as a risk although the site holds a tennacy agreement. To be checked.")}
@@ -729,7 +659,9 @@ service_provider_log <- check_service_provider2 %>%                             
   dplyr::rename(variable=name, old_value=value, value_cleaned=ngo.name, new_value=ngo_code) %>%
   left_join(response %>% select(uuid, q0_3_organization, a4_site_name) %>%
               dplyr::rename(agency=q0_3_organization, area=a4_site_name), by="uuid") %>%
-  mutate(issue="The organisation name is not recognized or there are multiple organisation names.", check_id = "12", fix="Checked with partner", checked_by="ON") %>%
+  mutate(issue="The organisation name is not recognized or there are multiple organisation names.",
+         check_id = paste0("12_","check_", gsub("_other|if_","",variable)),
+         fix="Checked with partner", checked_by="ON") %>%
   select(all_of(col.cl), everything(), -value_cleaned, -id) %>%
   mutate(external= ifelse(is.na(new_value), T, F), new_org="")                  # flag as external issues with no perfect match + add column to flag new organizations
 
@@ -738,11 +670,12 @@ service_provider_log_int <- service_provider_log %>% filter(external==FALSE)
 
 # Manually updated the remaining other entries before adding to external cleaning log if necessary
 dir.create("output/cleaning log/service provider", showWarnings = F)
-service_provider_log_ext %>% write.xlsx(paste0("output/cleaning log/service provider/service_provider_other_", today, ".xlsx"))
+# service_provider_log_ext %>% write.xlsx(paste0("output/cleaning log/service provider/service_provider_other_", today, ".xlsx"))
+service_provider_log_ext %>% save.service.provider.follow.up(paste0("output/cleaning log/service provider/service_provider_other_", today, ".xlsx"))
 # browseURL(paste0("output/cleaning log/service provider/service_provider_other_", today, ".xlsx"))
 
 # After updating the service provider other log, save it with _updated at the end of the file name / update filename below to read the updated file
-file.service.provider.log <- "output/cleaning log/service provider/service_provider_other_2021-06-27_updated.xlsx"
+file.service.provider.log <- "output/cleaning log/service provider/service_provider_other_2021-06-30_updated.xlsx"
 service_provider_log_ext_updated <- read.xlsx(file.service.provider.log) %>% 
   mutate_all(as.character) %>%
   mutate(external=ifelse(new_value %in% choices.ngo$ngo_code, F, T),            # flag as non external follow-up when matching has been done manually with a ngo code from the list
@@ -758,17 +691,14 @@ service_provider_log_other <- service_provider_log_int %>% bind_rows(service_pro
   mutate(new_value = ifelse(!is.na(new_value), NA, new_value))
 service_provider_log_recode <- service_provider_log_int %>% bind_rows(service_provider_log_ext) %>%
   mutate(variable = gsub("_other", "", variable), old_value = "other")  
-
 service_provider_log_final <- service_provider_log_other %>% bind_rows(service_provider_log_recode) %>%
   arrange(uuid, variable) 
 
 # Add perfect matches to internal cleaning log
-cleaning.log.internal <- cleaning.log.internal %>%                              
-  bind_rows(service_provider_log_final %>% filter(external==F) %>% select(-external))
+cleaning.log.internal <- cleaning.log.internal %>% bind_rows(service_provider_log_final %>% filter(external==F) %>% select(-external))
 
 # Add remaining other entries that require feedback from partners to the cleaning log
-cleaning.log <- cleaning.log %>%                                                
-  bind_rows(service_provider_log_final %>% filter(external==T) %>% select(-external))
+cleaning.log <- cleaning.log %>% bind_rows(service_provider_log_final %>% filter(external==T) %>% select(-external))
 
 ## Apply changes for perfect matches - recode service provider with other entry and put other as NA
 service_provider_log_final_int <- service_provider_log_final %>% filter(external==F)

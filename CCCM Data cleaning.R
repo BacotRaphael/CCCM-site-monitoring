@@ -10,7 +10,7 @@ today <- Sys.Date()
 ## Install/Load libraries
 if (!require("pacman")) install.packages("pacman")
 pacman::p_load(tidyverse, data.table, openxlsx, reshape2, sf, leaflet, readxl)
-p_load_gh("mabafaba/cleaninginspectoR","agualtieri/cleaninginspectoR","agualtieri/dataqualitycontrol", "impact-initiatives-research/clog")
+# p_load_gh("mabafaba/cleaninginspectoR","agualtieri/cleaninginspectoR","agualtieri/dataqualitycontrol", "impact-initiatives-research/clog")
 
 ## Source
 source("./R/cleanHead.R")
@@ -78,8 +78,8 @@ file.cleaning.log.internal <- "output/cleaning log/cleaning_log_int_all_2021-06-
 cleaning.log.int <- read.xlsx(file.cleaning.log.internal) %>% mutate_all(as.character)
 cleaning.log <- cleaning.log %>% bind_rows(cleaning.log.int)
 
-if ((cleaning.log %>% group_by(uuid, variable) %>% filter(n()>1) %>% nrow) > 0) {print("There are duplicates entries (or multiple entries for the same variable) in the cleaning log. Make sure it's ok and that there are no conflicting new_values assigned.")}
-duplicate.cl <- cleaning.log %>% group_by(uuid, variable) %>% filter(n()>1) %>% ungroup %>% arrange(uuid, variable)
+if ((cleaning.log %>% group_by(uuid, variable, check_id) %>% filter(n()>1) %>% nrow) > 0) {print("There are duplicates entries (or multiple entries for the same variable) in the cleaning log. Make sure it's ok and that there are no conflicting new_values assigned.")}
+duplicate.cl <- cleaning.log %>% group_by(uuid, variable, check_id) %>% filter(n()>1) %>% ungroup %>% arrange(uuid, variable)
 
 ### Apply cleaning log changes to raw response file
 clean_data <- response
@@ -101,35 +101,48 @@ for (r in seq_along(1:nrow(cleaning.log))){
   }
 }
 
-### Create new site IDs
-site.masterlist<-masterlist$Site_ID %>% unique                                  # Make sure all sites are on one sheet or consolidate on one sheet in masterlist
+## Check if new site ids need to be created 
+new.sites <- cleaning.log %>% filter(variable == "a4_site_name") %>% filter(new_site %in% c("TRUE", "T", TRUE, T))
+if ((a<-nrow(new.sites))>0){print(paste0(a, " New site ID must be generated."))}
+
+## Creation of new site IDs // COMMENT THE WHOLE SECTION IF NO NEED TO GENERATE SITE IDs.
+site.masterlist <- masterlist$Site_ID %>% unique                                  # Make sure all sites are on one sheet or consolidate on one sheet in masterlist
 
 new.sites <- cleaning.log %>%
   filter(variable == "a4_site_name") %>%
   filter(new_site %in% c("TRUE", "T", TRUE, T)) %>%                             # Display site id entered that are not in masterlist or kobo tool
-  filter(!(a4_site_name_new %in% unique(c(site.masterlist)))) %>% 
-  relocate(a2_district, a3_sub_district, .after = "a4_site_name_new_ar") %>%
+  filter(!(new_value %in% unique(c(site.masterlist)))) %>% 
+  left_join(clean_data %>% select(uuid, a2_district, a3_sub_district), by = "uuid") %>%
+  relocate(a4_other_site, a4_site_name_new_en, a4_site_name_new_ar, a2_district, a3_sub_district, new_site, .before = "old_value")
 
-## Flag sites that are existing and that don't need a new name (changing column new_site to FALSE)
-# existing.sites.uuid <- c("ca8c1315-4bf9-4cff-9c76-7c5eeac51182", "022deb2b-50ac-45dc-b3d5-44639236853a")
-# new.sites <- new.sites %>% mutate(new_site = ifelse(uuid %in% existing.sites.uuid, FALSE, new_site)) # put new_site = FALSE for the uuid selected above
+## Check that cleaning log for new sites has been filled correctly
+check_new_names_filled <- new.sites %>% summarise_at(vars(matches("a4_site_name_new")), ~sum(is.na(.)))
+
+if (sum(check_new_names_filled > 0)>0){
+  print("the new names in english and arabic are not specified for all new camps! Please update the file below.")
+  new.sites %>% mutate(issue="Check the new names in english and arabic and fill them all. Update new_site with FALSE if some sites don't need new IDs.") %>% write.xlsx(paste0("output/cleaning log/site name/new_sites_corrected_", today, ".xlsx"))
+  browseURL(paste0("output/cleaning log/site name/new_sites_corrected_", today, ".xlsx"))
+}
+## If relevant, check the names and update them accordingly in the excel file and then update the filename below with _updated at the end.
+file.name.new.sites <- "output/cleaning log/site name/new_sites_corrected_2021-06-30_updated.xlsx"
+if (sum(check_new_names_filled > 0)>0){new.sites <- read.xlsx(file.name.new.sites)}
+
+# Inspect the new attributed names in English and arabic
+check_names <- new.sites %>% select(matches("a4_site_name_new")) %>% view
 
 ## Create new sitename code for remaining sites
 max.id.split <- masterlist$Site_ID %>% sub(".*?_", "",.) %>% as.numeric %>% max(na.rm = T) # Extract the highest number in site id in masterlist
-
 latest_id <- masterlist$Site_ID[grepl(paste0("_", max.id.split), masterlist$Site_ID)]      # Extract the latest full ID
-
 seq <- (max.id.split+1):(max.id.split+500)                                                 # Create list of numbers starting from the latest one
 
-new.sites <- new.sites %>% filter(new_site == TRUE) %>%
+new.sites <- new.sites %>% 
   mutate(a4_site_name_new = paste0(a2_district, "_", seq[1:nrow(.)])) %>%       # create new site ID in column new_site_id of the cleaning log
-  relocate(a4_site_name_new,	a4_site_name_new_en,	a4_site_name_new_ar, .after = "issue") %>%
-  mutate(a4_site_name_new_ar=a4_other_site, a4_site_name_new_en=a4_other_site_translation)
+  relocate(a4_site_name_new,	a4_site_name_new_en,	a4_site_name_new_ar, .after = "issue")
 new.sites.uuid <- new.sites$uuid
 
 ## Update the masterlist with new sites entries + ID and available informations
 new.sites <- new.sites %>%
-  left_join(response %>% select(uuid, a7_site_population_hh, a7_site_population_individual), by="uuid") %>%
+  left_join(response %>% select(uuid, a7_site_population_hh, a7_site_population_individual, a5_2_gps_latitude, a5_1_gps_longitude), by="uuid") %>%
   mutate(Partner_Name = agency, Sub_Dist_ID=a3_sub_district, Site_ID = a4_site_name_new, Site_Name=a4_site_name_new_en,
          Site_Name_In_Arabic=a4_site_name_new_ar, Latitude=a5_2_gps_latitude, Longitude=a5_1_gps_longitude, "#_of_total_Households"=as.numeric(a7_site_population_hh),
          Total_Site_Population=as.numeric(a7_site_population_individual)) %>% select(intersect(colnames(.), colnames(masterlist)))
