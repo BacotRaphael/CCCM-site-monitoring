@@ -28,7 +28,8 @@ rawdata.filename.v1 <- "data/Copy of CCCM_Site_Reporting_Form_V1_Week 8_raw org 
 rawdata.filename.v2 <- "data/Copy of CCCM_Site_Reporting_V2__Week 8_raw org data.xlsx"
 tool.filename.v1 <- "data/CCCM_Site_Reporting_Kobo_tool_(V1)_12042021.xlsx"
 tool.filename.v2 <- "data/CCCM_Site_Reporting_Kobo_tool_(V2)_12042021.xlsx"
-sitemasterlist.filename <- "data/CCCM_IDP Hosting Site List_coordinates verification exercise_March2021.xlsx"
+# sitemasterlist.filename <- "data/CCCM_IDP Hosting Site List_coordinates verification exercise_March2021.xlsx"
+sitemasterlist.filename <- "data/CCCM IDP Sites_making NEW site names and IDs_May 2021_29062021.xlsx"
 filename.pcodes <- "R/pcodes/yem_admin_ochayemen_20191002.xlsx"
 
 ## Tool columns comparison

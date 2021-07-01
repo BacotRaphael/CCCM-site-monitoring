@@ -7,16 +7,13 @@ rm(list=ls())
 setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
 today <- Sys.Date()
 
-## Install packaged
-# install.packages("tidyverse")
-# install.packages("stringr")
-
-require(tidyverse)
-require(stringr)
-require(openxlsx)
+## Install/Load libraries
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(tidyverse, data.table, openxlsx, data.table)
 
 ## Load sources
 source("./R/cleanHead.R")
+source("./R/utils.R")
 
 ################################################################################
 #### Parameters TO BE UPDATED EACH TIME
@@ -32,9 +29,9 @@ kobo.filename.v1 <- "data/CCCM_Site_Reporting_Kobo_tool_(V1)_12042021.xlsx"
 kobo.filename.v2 <- "data/CCCM_Site_Reporting_Kobo_tool_(V2)_12042021.xlsx"
 data.filename.v1 <- "./output/Internal/CCCM_SiteReporting_V1 Internal_2021-05-19.xlsx"
 data.filename.v2 <- "./output/Internal/CCCM_SiteReporting_V2 Internal_2021-05-19.xlsx"
+sitemasterlist.filename <- "data/CCCM IDP Sites_making NEW site names and IDs_May 2021_29062021.xlsx"
 
 ## Load choice sheet
-# choices <- read.csv("./data/kobo/choices.csv")
 choices <- if (tool == "V1") {read.xlsx(kobo.filename.v1, sheet = "choices")} else if (tool == "V2") {
   read.xlsx(kobo.filename.v2, sheet = "choices")} else {print("invalid tool entered, should be either V1 or V2")}
 
@@ -58,8 +55,8 @@ choices <- choices %>% bind_rows(choices.binary)
 ################################################################################
 response <- if (tool == "V1") {read.xlsx(data.filename.v1)} else if (tool == "V2"){
   read.xlsx(data.filename.v2)} else {print("invalid tool version entered, should be either V1 or V2")}
-#response <- cleanHead(response)
-#response <- cleanHead(response)
+
+# Add site IDs from masterlist
 
 # Kobo Tool comparison
 # Make sure there is no additionnal differences between the two tools
@@ -69,6 +66,17 @@ col1 <- colnames(response1)
 col2 <- colnames(response2)
 setdiff(col1, col2)                                                             # displays columns that are V1 specific
 setdiff(col2, col1)                                                             # displays columns that are V2 specific
+
+# Load site masterlist
+## Load site_name masterlist to match admin names with site_name
+masterlist <- read.xlsx(sitemasterlist.filename) %>%                            
+  setNames(gsub("\\.", "_", colnames(.))) %>%
+  setnames(old = c("SITE_ID", "Site_Name", "Site_Name_In_Arabic"),              # Put here whatever names CCCM cluster put in the latest masterlist 
+           new = c("Site_ID", "Site_Name", "Site_Name_In_Arabic"),              # Streamline colnames to keep the same script.
+           skip_absent = TRUE) %>%
+  mutate_at(vars(-matches("_Households|_Population|_IDPs")), as.character) %>%  # mutate all names and IDs as character to enable matching
+  mutate_at(vars(matches("Newly_|_Households|Population|#_of_total_Households")), ~as.numeric(unlist(lapply(gsub(",", "", .), arabic.tonumber))))
+
 
 ## Filter out sites that are useless                                            => Should it be erased?
 #response <- response %>% filter(check == 1 & check.2 == 1)                     => Should it be erased?
@@ -112,8 +120,6 @@ data_rename_ar[] <- choices$`label::arabic`[match(unlist(data_rename_ar), choice
 
 ### Rename the variables to keep the data merge template intact
 data_norename <- response %>% select("q0_4_date","a1_governorate_name", "a2_district_name", "a3_sub_district_name", "a4_site_name", "a6_site_occupation_date_dd_mm_yy", "a7_site_population_individual", "a7_site_population_hh", starts_with("B1"))
-
-## Add site ID (still needs to be done - for now VLOOKUP in Excel)              => to be added here or not?
 
 ## Match choice variable name with choice label from the kobo tool for the multiple choices text column
 ## Reformat and add text questions Primary cooking space - safe cooking practices answers 
