@@ -77,6 +77,9 @@ masterlist <- read.xlsx(sitemasterlist.filename) %>%
   mutate_at(vars(-matches("_Households|_Population|_IDPs")), as.character) %>%  # mutate all names and IDs as character to enable matching
   mutate_at(vars(matches("Newly_|_Households|Population|#_of_total_Households")), ~as.numeric(unlist(lapply(gsub(",", "", .), arabic.tonumber))))
 
+## Load pcode
+filename.pcode <- "R/pcodes/admin_list.xlsx"
+pcodes <- read.xlsx(filename.pcode)
 
 ## Filter out sites that are useless                                            => Should it be erased?
 #response <- response %>% filter(check == 1 & check.2 == 1)                     => Should it be erased?
@@ -95,9 +98,9 @@ colnames(dots_merge) <- paste0("@", colnames(dots_merge))
 ## Note: Here the code selects all columns from V1 and V2, and ignore the one that don't exist
 ## Question for Christine/Kata => Should we select "Primary_cooking_space", "Safe_cooking_practices" for V1 as they exist in the tool? or it was non selected on purpose? 
 ## For now kept it non selected as well as additional_fire_safety_measures as we do recode it in the datarename_select_multiple
-data_rename <- response %>% select(any_of(c("b4_site_cccm_agency_name", "c2_landowner", "c1_type_of_site", "Primary_cooking_modality",
+data_rename <- response %>% select(any_of(c("q0_3_organization", "c2_landowner", "c1_type_of_site", "Primary_cooking_modality",
                                             "c3_tenancy_agreement_for_at_least_6_months", "b7_community_committee_in_place", "d1_most_common_reason_idps_left_place_of_origin",
-                                            "a8_population_groups_other_than_idps_in_site_select_all_applicable", "d3_most_common_intention_in_next_three_months", "c4_general_market_in_site_close_proximity",
+                                            "d3_most_common_intention_in_next_three_months", "c4_general_market_in_site_close_proximity",
                                             "d2_1_most_common_district_of_idp_origin", "d2_2_second_most_common_district_of_idp_origin", "d2_3_third_most_common_district_of_idp_origin", 
                                             "c6_electricity_solar_power_available_in_site", "c5_fuel_available_in_site_close_proximity", "c8_primary_water_source", "c9_primary_shelter_type",
                                             "c10_primary_latrine_type", "i1_top_priority_need", "i2_second_priority_need", "i3_third_priority_need",
@@ -129,13 +132,13 @@ choices.q <- choices %>% filter(grepl("q", list_name))                          
 
 # English reformat
 data_rename_select_multiple <- response %>%         
-  mutate_at(vars(c("Primary_cooking_space","Safe_cooking_practices","c7_presence_of_particularly_vulnerable_groups", "additional_fire_safety_measures")),
+  mutate_at(vars(c("Primary_cooking_space","Safe_cooking_practices", "a8_population_groups_other_than_idps_in_site_select_all_applicable", "additional_fire_safety_measures")),
             ~ gsub(" ,","," ,gsub("^, ", "", str_replace_all(., setNames(paste0(", ",choices.q$`label::english`), choices.q$name)))) %>% tolower %>% firstup(.)) %>%
   select(Primary_cooking_space, Safe_cooking_practices, c7_presence_of_particularly_vulnerable_groups, additional_fire_safety_measures)
 
 # Arabic reformat 
 data_rename_select_multiple_ar <- response %>%
-  mutate_at(vars(c("Primary_cooking_space","Safe_cooking_practices","c7_presence_of_particularly_vulnerable_groups", "additional_fire_safety_measures")),
+  mutate_at(vars(c("Primary_cooking_space","Safe_cooking_practices", "a8_population_groups_other_than_idps_in_site_select_all_applicable", "additional_fire_safety_measures")),
             ~gsub(" ،", "،", gsub("^،", "", str_replace_all(., setNames(paste0("، ",choices.q$`label::arabic`), choices.q$name))))) %>%
   select(Primary_cooking_space, Safe_cooking_practices, c7_presence_of_particularly_vulnerable_groups, additional_fire_safety_measures, 1)
 data_rename_select_multiple_ar$c7_presence_of_particularly_vulnerable_groups %>% unique
@@ -148,20 +151,26 @@ data_merge_ar <- cbind(data_rename_ar, data_rename_select_multiple_ar, data_nore
 # colnames(data_merge)[duplicated(colnames(data_merge))] => intermediate check to see if there are duplicates // should be erased hopefully :)
 
 # Recode the administration column as "present" or "not present", plus not applicable for NA in arabic, except for psp_ if_ngo columns for which NAs are recoded as "not available"
-data_merge <- data_merge %>%
-  mutate_at(vars(matches("B1_CCCM_Pillars_existing_on_s.site_administration_")), ~ifelse(is.na(.), NA,
-                                                                                         ifelse(. == 1, "Present",
-                                                                                                ifelse(. == 0, "Not Present", .))))
+# data_merge <- data_merge %>%
+#   mutate_at(vars(matches("B1_CCCM_Pillars_existing_on_s.site_administration_")), ~ifelse(is.na(.), NA,
+#                                                                                          ifelse(. == 1, "Present",
+#                                                                                                 ifelse(. == 0, "Not Present", .))))
 data_merge_ar <- data_merge_ar %>%
-  mutate_at(vars(matches("B1_CCCM_Pillars_existing_on_s.site_administration_")), ~ifelse(is.na(.), NA,
-                                                                                         ifelse(. == 1, "موجودة",
-                                                                                                ifelse(. == 0, "غير موجودة", .)))) %>%
-  mutate_at(vars(matches("psp_|if_ngo")), ~ifelse(is.na(.), "غير متوفر", .)) %>%             # code psp_ if_ngo columns as "not available" => غير متوفر
-  mutate_at(vars(-matches("psp_|if_ngo")), ~ifelse(is.na(.), "لا ينطبق", .))                  # code the other columns as "not applicable" => لا ينطبق
+  # mutate_at(vars(matches("B1_CCCM_Pillars_existing_on_s.site_administration_")), ~ifelse(is.na(.), NA,
+  #                                                                                        ifelse(. == 1, "موجودة",
+  #                                                                                               ifelse(. == 0, "غير موجودة", .)))) %>%
+  mutate_at(vars(matches("psp_|if_ngo")), ~ifelse(is.na(.), "لا ينطبق", .)) %>%             # code the other columns as "not applicable" => لا ينطبق
+  mutate_at(vars(-matches("psp_|if_ngo")), ~ifelse(is.na(.), "غير متوفر", .))              # code psp_ if_ngo columns as "not available" => غير متوفر
 
-#data_norename$a8_population_groups_other_than_idps_in_site_select_all_applicable <- str_replace_all(data_norename$a8_population_groups_other_than_idps_in_site_select_all_applicable, pattern = " ", replacement = " - ")
-#data_norename$a8_population_groups_other_than_idps_in_site_select_all_applicable <- str_replace_all(data_norename$a8_population_groups_other_than_idps_in_site_select_all_applicable, pattern = "_", replacement = " ")
-#data_norename$a4_site_code <- str_replace_all(data_norename$a4_site_code, pattern = "_", replacement = " - ")
+# Re-code not applicable for NA in Arabic, except for psp_ if_ngo columns for which NAs are recoded as "not available"
+
+data_merge_ar <- data_merge_ar %>%
+  left_join(choices[choices$list_name=="ngo",] %>% dplyr::select(name, `label::arabic`), by = c("q0_3_organization"="name")) %>%
+  dplyr::select(-q0_3_organization) %>% dplyr::rename(q0_3_organization=`label::arabic`) %>% relocate(q0_3_organization, .before = 1) %>%
+  dplyr::select(-a1_governorate_name,-a2_district_name) %>%
+  left_join(pcodes %>% select(admin3RefName_en, admin1Name_ar, admin2Name_ar, admin3Name_ar), by=c("a3_sub_district_name"="admin3RefName_en")) %>%
+  dplyr::select(admin1Name_ar, admin2Name_ar, admin3Name_ar, everything(), -a3_sub_district_name) %>%
+  dplyr::rename(a1_governorate_name=admin1Name_ar, a2_district_name=admin2Name_ar, a3_sub_district_name=admin3Name_ar)
 
 ## Step 4: Add maps and save as csv
 #data_merge$a4_site_name <- str_trim(data_merge$a4_site_name, "both")
@@ -170,24 +179,21 @@ data_merge_ar$`@maps` <- paste0("./maps/YEM_CCCM__",response$a3_sub_district_cod
 
 ## Write output file
 if (tool == "V1"){
-  
-  write.csv(data_merge, paste0("./merge/cccm_site-level_merge_en_v1_",today,".csv"), row.names = F)
-  # browseURL(paste0("./merge/cccm_site-level_merge_en_v1_",today,".csv"))
-  write.csv(data_merge_ar, paste0("./merge/cccm_site-level_merge_en_v1_",today,"_ar.csv"), row.names = F)
-  # browseURL(paste0("./merge/cccm_site-level_merge_en_v1_",today,"_ar.csv"))
+  write.xlsx(data_merge, paste0("./merge/cccm_site-level_merge_en_v1_",today,".xlsx"))
+  # browseURL(paste0("./merge/cccm_site-level_merge_en_v1_",today,".xlsx"))
+  write.xlsx(data_merge_ar, paste0("./merge/cccm_site-level_merge_en_v1_",today,"_ar.xlsx"))
+  # browseURL(paste0("./merge/cccm_site-level_merge_en_v1_",today,"_ar.xlsx"))
   
   } else if (tool == "V2") {
   
-  write.csv(data_merge, paste0("./merge/cccm_site-level_merge_en_v2_",today,".csv"), row.names = F)
-  # browseURL(paste0("./merge/cccm_site-level_merge_en_v2_",today,".csv"))
-  write.csv(data_merge_ar, paste0("./merge/cccm_site-level_merge_en_v2_",today,"_ar.csv"), row.names = F)
-  # browseURL(paste0("./merge/cccm_site-level_merge_en_v2_",today,"_ar.csv"))
+  write.xlsx(data_merge, paste0("./merge/cccm_site-level_merge_en_v2_",today,".xlsx"))
+  # browseURL(paste0("./merge/cccm_site-level_merge_en_v2_",today,".xlsx"))
+  write.xlsx(data_merge_ar, paste0("./merge/cccm_site-level_merge_en_v2_",today,"_ar.xlsx"))
+  # browseURL(paste0("./merge/cccm_site-level_merge_en_v2_",today,"_ar.xlsx"))
 
   } else {
   
     print("invalid tool version entered, should be either V1 or V2")}
-
-
 
 
 ## To get step by step understanding of how the recoding of multiple choice text columns is done 
