@@ -1,9 +1,11 @@
 ### Script that takes V1 and V2 files and appends them to Masters
 # REACH Yemen - christine.pfeffer@reach-initiative.org
-# 05/17/2021
+# Update Raphael Bacot - raphael.bacot@reach-initiative.org
+# 01/07/2021
 
 ## Useful resource
 # https://stackoverflow.com/questions/3171426/compare-two-data-frames-to-find-the-rows-in-data-frame-1-that-are-not-present-in
+
 
 rm(list=ls())
 setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
@@ -14,24 +16,35 @@ require(openxlsx)
 
 source("./R/moveme.R")
 
+### filename paths
+survey.v1.filename <- "data/CCCM_Site_Reporting_Kobo_tool_V1_23_05_2021_FINAL.xlsx"
+survey.v2.filename <- "data/CCCM_Site_Reporting_Kobo_tool_V2_23_05_2021_FINAL.xlsx" 
+id.list.filename <- "data/CCCM IDP Sites_making NEW site names and IDs_May 2021_29062021.xlsx"
+sitename.masterlist.filename <- "./data/CCCM_Site Reporting List_March 2021_ALL internal_incl. new site IDs.xlsx"
+# last.internal.v1.filename <- "./output/internal/CCCM_SiteReporting_V1 Internal_2021-07-01.xlsx"
+# last.internal.v2.filename <- "./output/internal/CCCM_SiteReporting_V2 Internal_2021-07-01.xlsx" 
+last.internal.v1.filename <- "./data/CCCM_SiteReporting_V1 Internal_2021-07-01.xlsx"
+last.internal.v2.filename <- "./data/CCCM_SiteReporting_V2 Internal_2021-07-01.xlsx" 
+
 ### Load kobo choices file to vlook up old site codes
-survey_v1 <- read.xlsx("data/CCCM_Site_Reporting_Kobo_tool_(V1)_12042021.xlsx", sheet = "survey")
-survey_v2 <- read.xlsx("data/CCCM_Site_Reporting_Kobo_tool_(V2)_12042021.xlsx", sheet = "survey")
-choices_v1 <- read.xlsx("data/CCCM_Site_Reporting_Kobo_tool_(V1)_12042021.xlsx", sheet = "choices")
-choices_v2 <- read.xlsx("data/CCCM_Site_Reporting_Kobo_tool_(V2)_12042021.xlsx", sheet = "choices")
+survey_v1 <- read.xlsx(survey.v1.filename, sheet = "survey")
+survey_v2 <- read.xlsx(survey.v2.filename, sheet = "survey")
+choices_v1 <- read.xlsx(survey.v1.filename, sheet = "choices")
+choices_v2 <- read.xlsx(survey.v2.filename, sheet = "choices")
 
 # binding all choices from the two tools together
 choices <- bind_rows(choices_v1, choices_v2) %>% group_by(list_name, name, `label::english`, `label::arabic`) %>% summarise(n=n()) %>% select(-n) %>% ungroup
 # choices <- read.csv("./data/kobo/choices.csv", check.names = T) %>% select(-X)
-external_choicesv1 <- read.xlsx("data/CCCM_Site_Reporting_Kobo_tool_(V1)_12042021.xlsx", sheet = "external_choices") %>% filter(list_name == "sitename")
-external_choicesv2 <- read.xlsx("data/CCCM_Site_Reporting_Kobo_tool_(V2)_12042021.xlsx", sheet = "external_choices") %>% filter(list_name == "sitename")
+external_choicesv1 <- read.xlsx(survey.v1.filename, sheet = "external_choices") %>% filter(list_name == "sitename")
+external_choicesv2 <- read.xlsx(survey.v2.filename, sheet = "external_choices") %>% filter(list_name == "sitename")
 
 # external_choices <- filter(external_choices, external_choices$list_name == "sitename")
 # names(external_choices)[names(external_choices) == "name"] <- "a4_site_code"
 # names(external_choices)[names(external_choices) == "label::english"] <- "a4_site_name"
 
 ## Load site ID master list
-id_list <- read.xlsx("./data/CCCM IDP Sites_site names and IDs_May 2021.xlsx")
+id_list <- read.xlsx(id.list.filename)
+# id_list <- read.xlsx("./data/CCCM IDP Sites_making NEW site names and IDs_May 2021_1072021.xlsx")
 #id_list$name <- str_trim(id_list$a4_site_name)
 
 #################################### INTERNAL ##############################################################################
@@ -41,40 +54,42 @@ id_list <- read.xlsx("./data/CCCM IDP Sites_site names and IDs_May 2021.xlsx")
 # I. Import all necessary files with renaming of similar column accross V1 and V2 when necessary
 
 #### Internal Master file
-master_all_int <- read.xlsx("./data/CCCM_Site Reporting List_March 2021_ALL internal_incl. new site IDs.xlsx") %>%
-  dplyr::rename(b4_site_cccm_agency_name = b2_site_smc_agency_name)
+master_all_int <- read.xlsx(sitename.masterlist.filename) 
 
 ### Load Last Cleaned files ###
 ## Internal
-last_internal_v1 <- read.xlsx("./output/internal/CCCM_SiteReporting_V1 Internal_2021-05-19.xlsx")
-last_internal_v2 <- read.xlsx("./output/internal/CCCM_SiteReporting_V2 Internal_2021-05-19.xlsx")
+last_internal_v1 <- read.xlsx(last.internal.v1.filename)
+last_internal_v2 <- read.xlsx(last.internal.v2.filename)
 
 ## If only TRUE it means that no new values have been cleaned - if FALSE, means that there are no surveys in both in current dataset(v1 or v2) and in masterlist
 unique(last_internal_v1$uuid %in% master_all_int$uuid)
 unique(last_internal_v2$uuid %in% master_all_int$uuid)
 
 ## Take latest dataset and remove the duplicated entries using the master
-new_v1 <- anti_join(last_internal_v1, master_all_int, "uuid") %>%
+new_v1 <- anti_join(last_internal_v1, master_all_int, "uuid") %>% 
   dplyr::rename(
-    # B1_CCCM_Pillars_existing_on_s.site_administration = B1_CCCM_Pillars_existing_on_s.site_administration__exu,       # check with christine that the idea is to recode the binary into a text question  [either code 1/0 for yes there is an administration, or write as text the name of the administration]
-    B1_CCCM_Pillars_existing_on_s.site_management_supervision = B1_CCCM_Pillars_existing_on_s.site_management__cccm_agency,
+#     B1_CCCM_Pillars_existing_on_s.site_administration = B1_CCCM_Pillars_existing_on_s.site_administration__exu,       # check with christine that the idea is to recode the binary into a text question  [either code 1/0 for yes there is an administration, or write as text the name of the administration]
+#     B1_CCCM_Pillars_existing_on_s.site_management_supervision = B1_CCCM_Pillars_existing_on_s.site_management__cccm_agency,
     d1_most_common_reason_idps_left_place_of_origin.security_concerns_conflict_explosives_lack_of_security_forces_war = d1_most_common_reason_idps_left_place_of_origin.security_concerns_conflict_explosives_lack_of_security_forces)
-
+# 
 new_v2 <- anti_join(last_internal_v2, master_all_int, "uuid") %>%
   dplyr::rename(
-    # B1_CCCM_Pillars_existing_on_s.site_administration = B1_CCCM_Pillars_existing_on_s.site_administration_SCMCHAIC,   # check with christine that the idea is to recode the binary into a text question
-    B1_CCCM_Pillars_existing_on_s.site_management_supervision = B1_CCCM_Pillars_existing_on_s.site_supervision__cccm_agency,
-    d1_most_common_reason_idps_left_place_of_origin.security_concerns_conflict_explosives_lack_of_security_forces_war = d1_most_common_reason_idps_left_place_of_origin.war) 
-
+#     # B1_CCCM_Pillars_existing_on_s.site_administration = B1_CCCM_Pillars_existing_on_s.site_administration_SCMCHAIC,   # check with christine that the idea is to recode the binary into a text question
+#     B1_CCCM_Pillars_existing_on_s.site_management_supervision = B1_CCCM_Pillars_existing_on_s.site_supervision__cccm_agency,
+    d1_most_common_reason_idps_left_place_of_origin.security_concerns_conflict_explosives_lack_of_security_forces_war = d1_most_common_reason_idps_left_place_of_origin.war)
+# 
 new_int <- plyr::rbind.fill(new_v1, new_v2) %>%
-  setNames(tolower(colnames(.)))  %>%                                              # Set names to lower cases to merge with master dataset
-  mutate(b1_CCCM_Pillars_existing_on_s.site_administration = ifelse(b1_cccm_pillars_existing_on_s.site_administration__exu == 1, "exu",
-                                                                    ifelse(b1_cccm_pillars_existing_on_s.site_administration_scmchaic == 1, "scmchaic",
-                                                                           NA))) %>%
-  select(-b1_cccm_pillars_existing_on_s.site_administration__exu, -b1_cccm_pillars_existing_on_s.site_administration_scmchaic)
+  setNames(tolower(colnames(.)))                                                # Set names to lower cases to merge with master dataset
+#   %>% mutate(b1_CCCM_Pillars_existing_on_s.site_administration = ifelse(b1_cccm_pillars_existing_on_s.site_administration__exu == 1, "exu",
+#                                                                     ifelse(b1_cccm_pillars_existing_on_s.site_administration_scmchaic == 1, "scmchaic",
+#                                                                            NA))) %>%
+#   select(-b1_cccm_pillars_existing_on_s.site_administration__exu, -b1_cccm_pillars_existing_on_s.site_administration_scmchaic)
 
 ## Append the unique new entries to the final Master ALL Internal (new IDs still need to be added manually)
-new_master_all_int <- plyr::rbind.fill(master_all_int, new_int)
+new_master_all_int <- plyr::rbind.fill(master_all_int, new_v1) %>%
+  mutate_at(vars(colnames(.)[grepl("\\.", colnames(.)) & (!grepl("other|Other", colnames(.)))]), as.numeric) %>%
+  mutate(date = as.Date(ifelse(!is.na(as.Date(as.Date(as.numeric(q0_4_date), origin="1900-01-01"), format = "%Y-%m-%d")), as.character(as.Date(as.Date(as.numeric(q0_4_date), origin="1900-01-01"), format = "%Y-%m-%d")), as.character(as.Date(q0_4_date, format = "%Y-%m-%d"))), format = "%Y-%m-%d")) %>% suppressWarnings()
+
 # write.xlsx(new_master_all_int, paste0("./output/internal/CCCM_SiteReporting_All Internal (with some ID)_",today,".xlsx"))
 
 ## II. Harmonisation of columns headers + recoding of binary/text column when necessary
@@ -120,7 +135,7 @@ new_master_all_int <- new_master_all_int %>%
          f1_threats_to_the_site.conflict_related_incidents_war = f1_threats_to_the_site.conflict_related_incidents + f1_threats_to_the_site.war) %>%
   select(-f1_threats_to_the_site.conflict_related_incidents, -f1_threats_to_the_site.war)
 
-# B.2. Appropriately recode the binary when there is a non na text response and the binary columns are NA.
+# B.2. Appropriately re-code the binary when there is a non na text response and the binary columns are NA.
 col <- colnames(new_master_all_int)[grepl("d1_most_common_reason_idps_left_place_of_origin.", colnames(new_master_all_int))]
 for (c in col){
   new_master_all_int <- new_master_all_int %>% 
@@ -174,7 +189,23 @@ for (c in col){
 new_master_all_int <- new_master_all_int %>%
   mutate(c7_presence_of_particularly_vulnerable_groups = gsub("NA | NA | NA", "", c7_presence_of_particularly_vulnerable_groups))
 
-# Relocate columns => Check if necessary
+# C.4. Check for multiple entries for each site, archive the oldest one and keep only latest one
+new_master_all_int_dup <- new_master_all_int %>%
+  group_by(a4_site_code) %>% mutate(n=n()) %>% mutate(max.date = max(date)) 
+check_dup <- new_master_all_int_dup %>%
+  filter(n>1) %>% select(a4_site_code, everything()) %>% arrange(a4_site_code) 
+  
+## Keep only the latest entry for each site where there is duplicates
+latest_entries <- check_dup %>% filter(date==max.date)
+
+# Log the past entries to keep track of it
+past_entries <- check_dup %>% filter(date!=max.date)
+dir.create("output/masterlist/archive")
+past_entries %>% write.xlsx("output/masterlist/archive/past_entries.xlsx")
+
+## bind together non duplicates with the clean duplicated entries
+new_master_all_int_test <- new_master_all_int_dup %>% filter(n==1) %>% bind_rows(latest_entries)
+
 
 ### Internal Site ID code => will be moved in data cleaning script
 #new_master_all_int$a4_site_name <- str_trim(new_master_all_int$a4_site_name, "both")
@@ -207,12 +238,12 @@ write.xlsx(new_master_all_int, paste0("./output/internal/CCCM_SiteReporting_All 
 ################################## EXTERNAL #############################################################
 
 ### Produce External Updated dataset ###
-master_all_ext <- read.xlsx("./data/CCCM_Site Reporting List_2020_internal.xlsx")
+master_all_ext <- read.xlsx("./data/CCCM_Site Reporting List_March 2021_ALL internal_incl. new site IDs.xlsx")
 
 ### Load Last Cleaned files ###
 ## External
-last_external_v1 <- read.xlsx("./output/external/CCCM_SiteReporting_V1 External_2021-05-18.xlsx")
-last_external_v2 <- read.xlsx("./output/external/CCCM_SiteReporting_V2 External_2021-05-18.xlsx")
+last_external_v1 <- read.xlsx("./output/external/CCCM_SiteReporting_V1 External_2021-07-01.xlsx")
+last_external_v2 <- read.xlsx("./output/external/CCCM_SiteReporting_V2 External_2021-07-01.xlsx")
 
 ## Create V1 and V2 variable
 last_external_v1$kobo_version <- "V1"
@@ -221,9 +252,15 @@ last_external_v2$kobo_version <- "V2"
 unique(last_external_v1$uuid %in% master_all_ext$uuid)
 unique(last_external_v2$uuid %in% master_all_ext$uuid)
 
-## Take latest dataset and remove the duplicated entries using the master
-new_v1 <- anti_join(last_external_v1, master_all_ext, "uuid")
-new_v2 <- anti_join(last_external_v2, master_all_ext, "uuid")
+# ## Take latest dataset and remove the duplicated entries using the master
+# new_v1 <- anti_join(last_external_v1, master_all_ext, "uuid")
+# new_v2 <- anti_join(last_external_v2, master_all_ext, "uuid")
+# 
+# new_ext <- plyr::rbind.fill(new_v1, new_v2)
+
+## Take latest dataset and remove the duplicated "older" entries using the master
+new_v1 <- anti_join(last_external_v1, master_all_ext, "a4_site_code")
+new_v2 <- anti_join(last_external_v2, master_all_ext, "a4_site_code")
 
 new_ext <- plyr::rbind.fill(new_v1, new_v2)
 
