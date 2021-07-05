@@ -118,10 +118,10 @@ new_master_all_int <- new_master_all_int %>%
          f1_threats_to_the_site = gsub("^ | $", "", f1_threats_to_the_site),
          f1_threats_to_the_site = gsub("infectious_diseasess", "infectious_diseases", f1_threats_to_the_site)
          )
-# for check, erase later
+# for check, keep commented
 # new_master_all_int$f1_threats_to_the_site %>% unique
 # all.choices.data <- new_master_all_int$f1_threats_to_the_site %>% str_split(" ") %>% unlist %>% as.data.frame %>% setNames("response") %>% group_by(response) %>%
-#   summarise(n())
+  # summarise(n())
 # choices %>% filter(grepl("f1", list_name))
 
 # B. Question Most common reason to leave place of origin - Harmonisation of  with past data
@@ -200,12 +200,11 @@ latest_entries <- check_dup %>% filter(date==max.date)
 
 # Log the past entries to keep track of it
 past_entries <- check_dup %>% filter(date!=max.date)
-dir.create("output/masterlist/archive")
+dir.create("output/masterlist/archive", showWarnings = F)
 past_entries %>% write.xlsx("output/masterlist/archive/past_entries.xlsx")
 
 ## bind together non duplicates with the clean duplicated entries
-new_master_all_int_test <- new_master_all_int_dup %>% filter(n==1) %>% bind_rows(latest_entries)
-
+new_master_all_int <- new_master_all_int_dup %>% filter(n==1) %>% bind_rows(latest_entries)
 
 ### Internal Site ID code => will be moved in data cleaning script
 #new_master_all_int$a4_site_name <- str_trim(new_master_all_int$a4_site_name, "both")
@@ -236,6 +235,9 @@ new_master_all_int_test <- new_master_all_int_dup %>% filter(n==1) %>% bind_rows
 write.xlsx(new_master_all_int, paste0("./output/internal/CCCM_SiteReporting_All Internal (WithID)_",today,".xlsx"))
 
 ################################## EXTERNAL #############################################################
+sitename.masterlist.ext.filename <- ""
+laste.external.v1.filename <- ""
+laste.external.v2.filename <- ""
 
 ### Produce External Updated dataset ###
 master_all_ext <- read.xlsx("./data/CCCM_Site Reporting List_March 2021_ALL internal_incl. new site IDs.xlsx")
