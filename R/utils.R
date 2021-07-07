@@ -285,7 +285,7 @@ add.to.cleaning.log <- function(checks, check_id, question.names=c(), issue="", 
   if (nrow(checks)>0){
     for(q.n in question.names){
       new.entries <- checks %>%  filter(flag) %>%
-        setnames(old = c("q0_3_organization", "a4_site_name"), new = c("agency", "area"), skip_absent = T) %>%
+        # setnames(old = c("q0_3_organization", "a4_site_name"), new = c("agency", "area"), skip_absent = T) %>%
         mutate(uuid=uuid %>% as.character,
                variable=q.n %>% as.character,
                issue=issue %>% as.character,
