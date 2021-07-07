@@ -301,26 +301,6 @@ add.to.cleaning.log <- function(checks, check_id, question.names=c(), issue="", 
   }
 }
 
-add.to.cleaning.log.gps <- function(checks, check_id, question.names=c(), issue="", new.value="" , fix="Checked with partner", checked_by="ON", add.col=c("")){
-  df <- initialise.cleaning.log()
-  if (nrow(checks)>0){
-    for(q.n in question.names){
-      new.entries <- checks %>%  filter(flag) %>%
-        mutate(uuid=uuid %>% as.character,
-               variable=q.n %>% as.character,
-               issue=issue %>% as.character,
-               check_id=check_id %>% as.character,
-               old_value=!!sym(q.n) %>% as.character,
-               new_value=new.value %>% as.character,
-               fix=fix %>% as.character,
-               checked_by= checked_by %>% as.character)
-      new.entries <- new.entries %>% select(all_of(col.cl), any_of(add.col))
-      df <- bind_rows(df, new.entries)
-    }
-    cleaning.log <<- bind_rows(cleaning.log, df %>% arrange(uuid, variable, agency))
-  }
-}
-
 save.service.provider.follow.up <- function(cl, filename.out="output/test.xlsx"){
   wb <- createWorkbook()
   addWorksheet(wb, "Follow-up")
