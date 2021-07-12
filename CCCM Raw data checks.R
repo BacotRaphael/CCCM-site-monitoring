@@ -25,8 +25,8 @@ tool.version <- "V1"                                                            
 ## Update the directory for all files each month with the latest version. Beware of getting V1 and V2 right!
 rawdata.filename.v1 <- "data/Copy of CCCM_Site_Reporting_Form_V1_Wk25_raw_data.xlsx"    # Update the name of the rawdata filename
 rawdata.filename.v2 <- "data/Copy of CCCM_Site_Reporting_V2__Week 8_raw org data.xlsx"
-tool.filename.v1 <- "data/CCCM_Site_Reporting_Kobo_tool_V1_04_07_2021_FINAL.xlsx"
-tool.filename.v2 <- "data/CCCM_Site_Reporting_Kobo_tool_(V2)_12042021.xlsx"
+tool.filename.v1 <- "data/kobo/CCCM_Site_Reporting_Kobo_tool_V1_04_07_2021_FINAL.xlsx"
+tool.filename.v2 <- "data/kobo/CCCM_Site_Reporting_Kobo_tool_V2_04_07_2021_FINAL.xlsx"
 sitemasterlist.filename <- "data/CCCM IDP Sites_making NEW site names and IDs_May 2021_06072021.xlsx"
 # sitemasterlist.filename <- "data/CCCM_IDP Hosting Site List_coordinates verification exercise_March2021.xlsx"
 
@@ -212,7 +212,7 @@ save.sitename.follow.up(sitename_log, filename.out = paste0("output/cleaning log
 ################################################################################
 
 ## 2.2.6. Reading the manually updated sitename cleaning log
-sitenamelog.updated <- "output/cleaning log/site name/site_name_log_2021-07-07_updated.xlsx"
+sitenamelog.updated <- "output/cleaning log/site name/site_name_log_2021-07-12_updated.xlsx"
 sitename_log_updated <- read.xlsx(sitenamelog.updated) 
 
 # Make sure no rubbish has been recorded in the the important columns
@@ -322,7 +322,7 @@ save.org.name.follow.up(ngo_log, filename.out = paste0("output/cleaning log/orga
 
 ################################################################################
 
-ngo.filename.updated <- "output/cleaning log/organisation name/org_name_log_2021-06-15_updated.xlsx"
+ngo.filename.updated <- "output/cleaning log/organisation name/org_name_log_2021-07-12_updated.xlsx"
 ngo_log_updated <- read.xlsx(ngo.filename.updated)
 
 # Make sure we filtered out duplicate partial matches
@@ -367,14 +367,10 @@ cleaning.log <- cleaning.log %>% bind_rows(org_cleaning_log)
 ## summarised masterlist by subdistrict / cleaning all subdistricts in which there is two versions
 
 # For new sites, join the full list of area of control and associate the kobo version tool they should have depending on control north/south
-aor3 <- read.csv("data/aor_admin3.csv") %>%
+aor3 <- read.xlsx("data/aor_admin3.xlsx") %>%
   mutate(tool = ifelse(control_north == 1 & control_south == 1, "V1 & V2", ifelse(control_north == 1 & control_south == 0, "V2", "V1")))
 
-check_tool_version <- response %>%
-  
-
 ## Update the rest of that part for the tool using the aor + masterlist 
-
 check_tool_version <- response %>%
   left_join(masterlist %>% dplyr::select(Site_ID, Tool) %>% dplyr::rename(tool.masterlist=Tool), by=c("a4_site_name"="Site_ID")) %>%
   left_join(aor3 %>% dplyr::select(admin3Pcode,tool) %>% dplyr::rename(tool.aor=tool), by=c("a3_sub_district"="admin3Pcode")) %>%
@@ -439,11 +435,6 @@ check.not.cleaned <- response %>% select(uuid, matches("longitude|latitude|issue
 # Check the automatically cleaned lon/lat entries
 check.cleaned <- response %>% select(uuid, matches("longitude|latitude|issue|_clean|flag_")) %>% filter(!is.na(Longitude_clean) | !is.na(Latitude_clean) & (!is.na(issue_lon) | !is.na(issue_lat)))
 
-# Manual update of Long_clean and Lat_clean in response file
-for (r in nrow(gps.internal.log.updated)){
-  response[response$uuid==gps.internal.log.updated[r,"uuid"], c("Longitude_clean", "Latitude_clean")] <-  gps.internal.log.updated[r, c("Longitude_clean", "Latitude_clean")]
-}
-
 # 4. Second GPS check and cleaning step - Join valid GPS coordinates with corresponding districts/subdistrict, flag inconsistencies between GPS and recorded sub-district
 gps.check.admin()                                                               # function defined in utils.R
 
@@ -461,16 +452,16 @@ check_gps <- response.df %>%
 # Manually update the long/lat entries if relevant in Longlitude_clean and Latitude_clean
 dir.create("output/cleaning log/gps check", showWarnings = F)
 check_gps %>% select(uuid, matches("internal.check|longitude|latitude|issue|_clean|flag")) %>% write.xlsx(paste0("output/cleaning log/gps check/gps_manual_update", today,".xlsx"))
-# browseURL(paste0("output/cleaning log/gps check/gps_manual_update", today,".xlsx"))
+browseURL(paste0("output/cleaning log/gps check/gps_manual_update", today,".xlsx"))
 
 ## Open the gps_manual_update file to update manually any Longitude_clean and Latitude_clean entries that the script has missed
 ## If you're confident about the changes, put "TRUE" in the column internal.check to keep it in internal cleaning log
 ## After looking in the file and updating the Longitude_clean and Latitude_clean when relevant, save it with "_updated" at the end and run the lines below
-check_gps <- read.xlsx("output/cleaning log/gps check/gps_manual_update2021-07-07_updated.xlsx") %>%
+check_gps <- read.xlsx("output/cleaning log/gps check/gps_manual_update2021-07-12_updated.xlsx") %>%
   left_join(response %>% select(-matches("longitude|latitude|issue|_clean|flag")), by="uuid")
 
 ## Separate internal gps cleaning log and external requiring Partner's feedback + small formatting changes for non flagged gps coordinates
-gps_log_int <- check_gps %>% filter(flag ==T & internal.check == T) %>%
+gps_log_int <- check_gps %>% filter(flag == T & internal.check == T) %>%
   select(uuid, matches("internal|flag|longitude|latitude|issue|clean")) 
 
 ## Apply changes on response file for straightforward gps corrections
@@ -692,7 +683,7 @@ service_provider_log_ext %>% save.service.provider.follow.up(paste0("output/clea
 # browseURL(paste0("output/cleaning log/service provider/service_provider_other_", today, ".xlsx"))
 
 # After updating the service provider other log, save it with _updated at the end of the file name / update filename below to read the updated file
-file.service.provider.log <- "output/cleaning log/service provider/service_provider_other_2021-07-07_updated.xlsx"
+file.service.provider.log <- "output/cleaning log/service provider/service_provider_other_2021-07-12_updated.xlsx"
 service_provider_log_ext_updated <- read.xlsx(file.service.provider.log) %>% 
   mutate_all(as.character) %>%
   mutate(external=ifelse(new_value %in% choices.ngo$ngo_code, F, T),            # flag as non external follow-up when matching has been done manually with a ngo code from the list
@@ -735,7 +726,7 @@ for (r in seq_along(nrow(service_provider_log_final_int))){
 # cleaning.log <- bind_rows(cleaning.log, check_survey_length)                  # time check commented for now as it seems not relevant
 
 cleaning.log <- cleaning.log %>%
-  mutate(change = NA, comment="") %>%                                           # adding "change" column to be filled later (will determine whether changes must be done or not)
+  mutate(change = "", comment="") %>%                                           # adding "change" column to be filled later (will determine whether changes must be done or not)
   relocate(change, comment, .after="new_value") %>%
   arrange(agency, check_id, uuid)                                               
 

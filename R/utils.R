@@ -357,13 +357,17 @@ save.org.name.follow.up <- function(cl, filename.out="output/test.xlsx"){
   
   col.id <- which(colnames(cl) %in% c("ngo_code_partial_match"))
   random.color <- ""
-  for (r in 2:nrow(cl)){
-    if(as.character(cl[r, "uuid"])==as.character(cl[r-1, "uuid"])){
-      if (random.color == "") random.color <- randomColor(1, luminosity = "light")
-      addStyle(wb, "Follow-up", style = createStyle(fgFill=random.color, wrapText=F), 
-               rows = r:(r+1), cols=col.id)
-    } else random.color=""
+  if (nrow(cl)!=0){
+    {for (r in 2:nrow(cl)){
+        if(as.character(cl[r, "uuid"])==as.character(cl[r-1, "uuid"])){
+          if (random.color == "") random.color <- randomColor(1, luminosity = "light")
+          addStyle(wb, "Follow-up", style = createStyle(fgFill=random.color, wrapText=F), 
+                   rows = r:(r+1), cols=col.id)
+        } else random.color=""
+      }
+    }
   }
+  
   
   saveWorkbook(wb, filename.out, overwrite = TRUE)
 } 
