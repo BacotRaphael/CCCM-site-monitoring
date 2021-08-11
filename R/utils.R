@@ -357,17 +357,13 @@ save.org.name.follow.up <- function(cl, filename.out="output/test.xlsx"){
   
   col.id <- which(colnames(cl) %in% c("ngo_code_partial_match"))
   random.color <- ""
-  if (nrow(cl)!=0){
-    {for (r in 2:nrow(cl)){
-        if(as.character(cl[r, "uuid"])==as.character(cl[r-1, "uuid"])){
-          if (random.color == "") random.color <- randomColor(1, luminosity = "light")
-          addStyle(wb, "Follow-up", style = createStyle(fgFill=random.color, wrapText=F), 
-                   rows = r:(r+1), cols=col.id)
-        } else random.color=""
-      }
-    }
+  for (r in 2:nrow(cl)){
+    if(as.character(cl[r, "uuid"])==as.character(cl[r-1, "uuid"])){
+      if (random.color == "") random.color <- randomColor(1, luminosity = "light")
+      addStyle(wb, "Follow-up", style = createStyle(fgFill=random.color, wrapText=F), 
+               rows = r:(r+1), cols=col.id)
+    } else random.color=""
   }
-  
   
   saveWorkbook(wb, filename.out, overwrite = TRUE)
 } 
@@ -542,6 +538,38 @@ get.choice.list.name <- function(x){
 
 get.q.type <- function(x) return(str_split(x, " ")[[1]][1])
 
+data.validation.list.c <- function(choices, tool){
+  choicelist <- get.select.db.c(choices, tool) %>% dplyr::select(name, choices)                  # extract list of valid answer for all survey
+  choice_validation <- choicelist %>% mutate(col="", .before=1) %>% transpose %>% as.data.frame %>% setNames(.[1,]) %>% slice(-1) %>% mutate_all(~str_split(.,";\n"))
+  nrow_validation <- lapply(choice_validation, function(x) length(x[[1]])) %>% unlist %>% max
+  data.val <<- data.frame(matrix(NA, nrow = nrow_validation, ncol = 0))
+  for (c in colnames(choice_validation)){
+    data.val <- data.val %>% mutate(!!sym(c) := c(unlist(choice_validation[[c]]), rep(NA, nrow_validation-length(choice_validation[[c]][[1]]))))
+  }
+  return(data.val)
+}
+
+choice.long <- function(choices, tool){
+  choices <- data.validation.list.c(choices, tool)
+  choices_long <- choices %>% pivot_longer(cols=colnames(.)) %>% arrange(name) %>% filter(!is.na(value))
+  return(choices_long)
+}
+
+get.select.db.c <- function(choices, tool){
+  # list of choices for each list_name (from TOOL_CHOICES)
+  list.choices <- choices %>% filter(!is.na(list_name)) %>% group_by(list_name) %>%
+    mutate(choices=paste(name, collapse=";\n"),
+           choices.label=paste(`label::english`, collapse=";\n")) %>%
+    summarise(choices=choices[1], choices.label=choices.label[1])
+  select.questions <- tool %>% select(type, name) %>%
+    mutate(q.type=as.character(lapply(type, get.q.type)),
+           list_name=as.character(lapply(type, get.choice.list.name))) %>%
+    filter(list_name!="NA" & list_name!="group" & list_name!="repeat") %>%
+    left_join(list.choices, by="list_name") %>%
+    filter(!is.na(choices))
+  return(select.questions)
+}
+
 get.select.db <- function(){
   # list of choices for each list_name (from TOOL_CHOICES)
   list.choices <- choices_all %>% filter(!is.na(list_name)) %>% group_by(list_name) %>% 
@@ -667,3 +695,52 @@ is.Arabic<-function(utf8char) #returns TRUE if utf8char is within the Arabic Uni
   if (v %in% 0x1EE00:0x1EEFF) return (TRUE)
   FALSE
 }
+
+#5. Change date to text (i.e. March 2021)
+
+number.to.arabic <- function(s){
+  arabic <- c("\u0660","\u0661","\u0662","\u0663","\u0664","\u0665","\u0666","\u0667","\u0668","\u0669")
+  english <- c("0","1","2","3","4","5","6","7","8","9")
+  res <- s %>% str_replace_all(setNames(arabic, english))
+  return(res)
+}
+
+months.to.arabic <- function(s){
+  arabic <- c("يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو", "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر")
+  english <- c("January","February","March","April","May","June","July","August","September","October", "November", "December")
+  res <- s %>% str_replace_all(setNames(arabic, english))
+  return(res)
+}
+
+date.to.monthyear <- function(x){
+  y <- as.Date(x, format = "%Y-%m-%d")
+  res <- paste0(months(y), " ", format(y, "%Y"))
+  return(res)
+}
+
+date.to.monthyear.arabic <- function(x){
+  y <- as.Date(x, format = "%Y-%m-%d")
+  z <- paste0(months(y), " ", format(y, "%Y"))
+  res1 <- months.to.arabic(z)
+  res <- number.to.arabic(res1)
+  return(res)
+}
+
+date.to.monthyear.arabic.test <- function(x){
+  z <- date.to.monthyear(x)
+  res <- number.to.arabic(z) %>% months.to.arabic(.)
+  return(res)
+}
+
+
+clean.date.vec <- function(x){
+  res <- lapply(x, clean.date) %>% unlist
+}
+
+clean.date <- function(x){
+  if (!grepl("\\/",x) & !grepl("-",x) & grepl("\\d", x)){
+    res <- as.character(as.Date(as.numeric(x), origin="1900-01-01"))
+  } else {res <- x}
+  return(res)
+}
+
