@@ -92,6 +92,37 @@ coldf <- c("uuid", "q0_3_organization", "a4_site_name")
 col.cl <- c("uuid", "agency", "area", "variable", "issue", "check_id", "old_value", "new_value", "fix", "checked_by")
 cleaning.log <- initialise.cleaning.log()
 cleaning.log.internal <- initialise.cleaning.log()
+deletion.log <- data.frame() 
+
+## Check 0: Check for duplicated uuid
+check.uuid <- response %>% group_by(uuid) %>% mutate(n=n()) %>% filter(n>1) %>%
+  mutate(flag=T, issue="Duplicated uuid.") %>% rename_at(coldf, ~col.cl[1:3])
+valid.col <- tool %>% filter(str_detect(type, "integer|select_one|select_multiple|text"),
+                             !str_detect(name, "^img_")) %>% pull(name)
+check.uuid.diff <- check.uuid %>% group_by(uuid) %>% summarise(across(any_of(valid.col), ~length(unique(.))>1)) %>%
+  mutate(n.diff.answers = rowSums(across(any_of(valid.col), ~ . == TRUE)))
+check.uuid.diff %>% str
+# diff.answers <- check.uuid.diff %>% dplyr::select(where(~sum(.)==TRUE))
+## TO finish later => select columns that have different answers, and then pull the different values from the raw data.
+## here for this dataset this how it goes manually =>
+check.uuid.diff <- check.uuid  %>% select(c8_comment_primary_water_source, c9_comment_primary_shelter_type)
+
+print(paste0("There are ", nrow(check.uuid)," duplicated uuid in the dataset. The number of different answers for each couple of duplicated is ",
+             check.uuid.diff$n.diff.answers, " answers."))
+
+## to be done:deletion log population with the deleted entries
+# deletion.log <- plyr::rbind.fill(deletion.log, check.uuid %>% )
+# add.to.cleaning.log(checks = check.uuid, check_id = "0", question.names = "uuid", issue = issue)
+
+## Filter out the duplicated uuid
+response <- response %>% filter(!duplicated(uuid)) ## ONLY USE IF PERFECT DUPLICATED SURVEYS
+
+## IF not perfect duplicated surveys
+# id.to.delete <- c("207572666")
+#  <- c("2")
+# response <- response %>% 
+    # filter(!`_id` %in% id.to.delete)   # if you want to delete using _id
+    # filter(!row_number() %in% row.number.to.delete) # if you want to delete using the row number
 
 ## Check 1: check that there are no site surveyed twice
 n_occur <- response %>%                                                         # Check duplicates sitenames
@@ -473,14 +504,18 @@ check_gps <- response.df %>%
 
 # Manually update the long/lat entries if relevant in Longlitude_clean and Latitude_clean
 dir.create("output/cleaning log/gps check", showWarnings = F)
-check_gps %>% select(uuid, matches("internal.check|longitude|latitude|issue|_clean|flag")) %>% write.xlsx(paste0("output/cleaning log/gps check/gps_manual_update", today,".xlsx"))
+
+check_gps %>% select(uuid, matches("internal.check|longitude|latitude|issue|_clean|flag|admin3")) %>%
+  write.xlsx(paste0("output/cleaning log/gps check/gps_manual_update", today,".xlsx"))
 browseURL(paste0("output/cleaning log/gps check/gps_manual_update", today,".xlsx"))
 
 ## Open the gps_manual_update file to update manually any Longitude_clean and Latitude_clean entries that the script has missed
 ## If you're confident about the changes, put "TRUE" in the column internal.check to keep it in internal cleaning log
 ## After looking in the file and updating the Longitude_clean and Latitude_clean when relevant, save it with "_updated" at the end and run the lines below
-check_gps <- read.xlsx("output/cleaning log/gps check/gps_manual_update2021-09-08_updated.xlsx") %>%
-  left_join(response %>% select(-matches("longitude|latitude|issue|_clean|flag")), by="uuid")
+check_gps <- read.xlsx("output/cleaning log/gps check/gps_manual_update2021-09-12_updated.xlsx") %>%
+  left_join(response %>% select(-matches("internal.check|longitude|latitude|issue|_clean|flag|admin3")), by="uuid") %>%
+  left_join(pcodes %>% select(admin1Name_en.gps.matched=admin1Name_en, admin2Name_en.gps.matched=admin2Name_en, admin3Pcode), by=c("admin3Pcode.gps.matched"="admin3Pcode")) %>%
+  relocate(matches("admin1|admin2"), .before="admin3Name_en.gps.matched")
 
 ## Separate internal gps cleaning log and external requiring Partner's feedback + small formatting changes for non flagged gps coordinates
 gps_log_int <- check_gps %>% filter(flag == T & internal.check == T) %>%
@@ -496,7 +531,7 @@ for (r in seq_along(1:nrow(gps_log_int))){
 ## Map to display gps points that have issues  
 df.adm2 <- adm2 %>% st_join(response.with.gps %>% st_as_sf() %>% select(issue.gps)) %>% mutate(has.gps.issue = ifelse(!is.na(issue.gps), 1, 0))
 df.adm_loc <- response.with.gps %>% filter(!is.na(issue.gps)) %>% st_as_sf() %>%
-  select(matches("^admin|longitude|latitude|Pcode"), everything())
+  select(matches("^admin|longitude|latitude|Pcode"), everything()) %>% mutate(across(matches("admin"), as.character))
 
 pal.adm2 <- function(x) return(ifelse(x!=0, "indianred", "ghostwhite"))
 
@@ -506,8 +541,8 @@ map <- leaflet() %>% addTiles() %>%
               fillColor = ~pal.adm2(df.adm2$has.gps.issue), label = df.adm2$admin2Name_en) %>%
   addMarkers(data = df.adm_loc, group = "All",
              label = paste0("Site name: ", df.adm_loc$a4_site_name," - The admin name entered in dataset is ", df.adm_loc$admin3Name_en_df, ",\r\nactual district according to GPS location is: ", df.adm_loc$admin3RefName_en)) %>%
-  addMarkers(data = df.adm_loc %>% filter(admin3Name_en_df!=admin3Name_en), group = "Non matching GPS",
-             label = paste0("Site name: ", df.adm_loc$a4_site_name," - The admin name entered in dataset is ", df.adm_loc$admin3Name_en_df, ",\r\nactual district according to GPS location is: ", df.adm_loc$admin3RefName_en)) %>%
+  addMarkers(data = df.adm_loc %>% filter(admin3Name_en_df!=admin3RefName_en), group = "Non matching GPS",
+             label = paste0("Site name: ", data$a4_site_name," - The admin name entered in dataset is ", data$admin3Name_en_df, ",\r\nactual district according to GPS location is: ", data$admin3RefName_en)) %>%
   addLayersControl(baseGroups = c("All", "Non matching"), position =  "bottomleft", options = layersControlOptions(collapsed = FALSE))
 
 map                                                                             # Display map
@@ -519,7 +554,7 @@ check_gps <- check_gps %>% dplyr::rename(agency=q0_3_organization, area=a4_site_
 add.to.cleaning.log(checks = check_gps, check_id = "4",
                     question.names = c("a3_sub_district", "a5_1_gps_longitude", "a5_2_gps_latitude"), 
                     issue = "issue",
-                    add.col = c("Longitude_clean", "Latitude_clean", "admin3Pcode.gps.matched", "admin3Name_en_df", "admin3Name_en.gps.matched", "internal.check"))
+                    add.col = c("Longitude_clean", "Latitude_clean", "admin1Name_en.gps.matched", "admin2Name_en.gps.matched" ,"admin3Pcode.gps.matched", "admin3Name_en_df", "admin3Name_en.gps.matched", "internal.check"))
 cleaning.log <- cleaning.log %>%                                                # only keep sub-district feedback when GPS falls outside of admin3 / could keep it for all (outside of ye / lon/lat switched) 
   filter(!(variable == "a3_sub_district" &
              !grepl("The sub-district name entered is not corresponding to the gps location entered", issue))) %>%
@@ -532,7 +567,13 @@ cleaning.log.internal <- cleaning.log.internal %>% bind_rows(cleaning.log %>% fi
 cleaning.log <- cleaning.log %>% filter(is.na(internal.check) | internal.check == F) %>% select(-internal.check)
 
 ## Check 4.1 Numerical outliers checks
-col.num <- c("a7_site_population_hh", "a7_site_population_individual")          # Put all columns requiring numerical outlier check
+# col.num <- c("a7_site_population_hh", "a7_site_population_individual")          # Put all columns requiring numerical outlier check
+# compute the average hh size to check consistency between population hh and individual
+response <- response %>% mutate(average.hh.size = (a7_site_population_individual/a7_site_population_hh))
+
+# filter columns reuiring numerical outlier check
+col.num <- tool %>% filter(str_detect(type, "integer")) %>% pull(name)
+col.num <- c("average.hh.size", col.num) ## Adding average hh size // NOTE IF YOU NEED OTHER COLUMN that was not in the tool, do it here
 method <- "sd-log"
 
 check_outliers <- response %>% select(uuid, any_of(col.num)) %>%
@@ -555,7 +596,7 @@ priority.need.checks(response)
 # adequacy_log %>% view                                                           # priority need log is stored in this dataframe
 
 if(nrow(adequacy_log)==0) {print("No issues across avilability and service provisions have been detected. The dataset seems clean.")} else {
-  print("Issues across avilability and service provisions have been detected. To be checked")}
+  print(paste0("There are ", nrow(adequacy_log)," issues across avilability and service provisions have been detected. To be checked"))}
 
 ### Check 6: Phone number 
 ### Flag all phone numbers in the data that don't start with the correct phone code for Yemen
@@ -706,10 +747,10 @@ service_provider_log_int <- service_provider_log %>% filter(external==FALSE)
 # Manually updated the remaining other entries before adding to external cleaning log if necessary
 dir.create("output/cleaning log/service provider", showWarnings = F)
 service_provider_log_ext %>% save.service.provider.follow.up(paste0("output/cleaning log/service provider/service_provider_other_", today, ".xlsx"))
- browseURL(paste0("output/cleaning log/service provider/service_provider_other_", today, ".xlsx"))
+browseURL(paste0("output/cleaning log/service provider/service_provider_other_", today, ".xlsx"))
 
 # After updating the service provider other log, save it with _updated at the end of the file name / update filename below to read the updated file
-file.service.provider.log <- "output/cleaning log/service provider/service_provider_other_2021-09-01_updated.xlsx"
+file.service.provider.log <- "output/cleaning log/service provider/service_provider_other_2021-09-12_updated.xlsx"
 service_provider_log_ext_updated <- read.xlsx(file.service.provider.log) %>% 
   mutate_all(as.character) %>%
   mutate(external=ifelse(new_value %in% choices.ngo$ngo_code, F, T),            # flag as non external follow-up when matching has been done manually with a ngo code from the list
@@ -737,9 +778,11 @@ cleaning.log <- cleaning.log %>% bind_rows(service_provider_log_final %>% filter
 ## Apply changes for perfect matches - recode service provider with other entry and put other as NA
 service_provider_log_final_int <- service_provider_log_final %>% filter(external==F)
 for (r in seq_along(nrow(service_provider_log_final_int))){
-  var <- service_provider_log_final_int[r, "variable"] %>% as.character
-  new_value <- service_provider_log_final_int[r, "new_value"] %>% as.character
-  response[response$uuid == as.character(service_provider_log_final_int[r, "uuid"]), var] <- new_value
+  if (nrow(service_provider_log_final_int)>0){
+    var <- service_provider_log_final_int[r, "variable"] %>% as.character
+    new_value <- service_provider_log_final_int[r, "new_value"] %>% as.character
+    response[response$uuid == as.character(service_provider_log_final_int[r, "uuid"]), var] <- new_value
+  }
 }
 
 ### Check 13: Survey length 
@@ -751,10 +794,19 @@ for (r in seq_along(nrow(service_provider_log_final_int))){
 ## Add to the cleaning log
 # cleaning.log <- bind_rows(cleaning.log, check_survey_length)                  # time check commented for now as it seems not relevant
 
+replacement <- masterlist %>% select(Site_ID, Site_Name)
+
+
+
 cleaning.log <- cleaning.log %>%
-  mutate(change = "", comment="") %>%                                           # adding "change" column to be filled later (will determine whether changes must be done or not)
+  left_join(response %>% select(uuid, a4_other_site), by="uuid") %>% ## join other site when partners enter other in area
+  dplyr::rename(a4_other_site.all=a4_other_site.y, a4_other_site=a4_other_site.x) %>%
+  mutate(change = "", comment="",                # adding "change" column to be filled later (will determine whether changes must be done or not)
+         area = ifelse(area=="other", a4_other_site.all,
+                            str_replace_all(area, setNames(replacement$Site_Name, replacement$Site_ID))),
+         .after="area") %>% select(-a4_other_site.all) %>%                                           
   relocate(change, comment, .after="new_value") %>%
-  arrange(agency, check_id, uuid)                                               
+  arrange(agency, check_id, uuid)
 
 ## Internal check for duplicate (To make sure you didn't do rubbish when copypasting code for a new logical check
 cleaning.log.dup <- cleaning.log %>%
@@ -765,7 +817,7 @@ if ((t <- nrow(cleaning.log.dup)) > 0) {print(paste0("There are ", t, " duplicat
 ### Saves and put in format cleaning log 
 dir.create("output/cleaning log", showWarnings = F)
 save.follow.up.requests(cleaning.log, filename.out=paste0("output/cleaning log/cleaning_log_ext_all_", today,".xlsx"))
- browseURL(paste0("output/cleaning log/cleaning_log_ext_all_", today,".xlsx"))
+browseURL(paste0("output/cleaning log/cleaning_log_ext_all_", today,".xlsx"))
 
 ### Split all cleaning log by partner
 dir.create("output/cleaning log/partners", showWarnings = F, recursive = T)
@@ -789,12 +841,13 @@ response <- response %>%
   left_join(sitename_log_updated %>%                                            # add the sitename match proposed (id, english, arabic)
               filter(!duplicated(uuid)) %>%
               select(uuid, a4_site_name_new, a4_site_name_new_en, a4_site_name_new_ar),
-            by = "uuid") %>% relocate(matches("a4_site_name_new"), .after = "a4_other_site")  
+            by = "uuid") %>% relocate(matches("a4_site_name_new"), .after = "a4_other_site") 
+## %>% rename(`Name of sub-district according to GPS location` = admin3Name_en.gps.matched)
 response %>% write.xlsx(paste0("output/internal/CCCM_SiteReporting_",tool.version,"_Internal_",today,".xlsx"))
 
 ### Save anonymized version of response file with cleaned long/lat + intermediate columns created in case
 response_to_share <- response %>% 
-  select(any_of(sensible.columns))                                              # anonymise dataset, deselect geometry column
+  select(-any_of(sensible.columns))                                             # anonymise dataset, deselect geometry column
   
 response_to_share %>% write.xlsx(file = paste0("output/response_updated_", today,".xlsx"))          # Write whole dataset to be shared
 
