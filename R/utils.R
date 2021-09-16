@@ -36,7 +36,7 @@ detect.outliers <- function(df, method="sd-linear", n.sd=3, n.iqr=3){
 ## 2. Priority needs check
 priority.check <- function(df, var){
   patt_rep <- logical.inconsistencies %>% 
-    mutate(replacement = ifelse(service.level.var==var, priority.need, NA)) %>% 
+    mutate(replacement = ifelse(service.level.var==var, as.character(priority.need), NA)) %>% 
     select(-issue, -service.level.var) %>%
     rbind(c("legal_services", NA)) 
   ## Choice in priority need that has no corresponding service level var in survey. to be checked
@@ -60,7 +60,8 @@ priority.need.checks <- function(df){
                      "water", "medical_assistance", "education", "livelihood_assistance",
                      "protection_services", "nutrition_services", "sanitation_services")
   logical.inconsistencies <<- data.frame(service.level.var, priority.need) %>%
-    mutate(issue=paste0(service.level.var, " reported as adequate but ", priority.need, " cited as top three priority need. To be checked."))
+    mutate(issue=paste0(service.level.var, " reported as adequate but ", priority.need, " cited as top three priority need. To be checked.")) %>%
+    mutate_all(as.character)
   for (var in service.level.var){
     check_var <- priority.check(df, var)
     add.to.cleaning.log(check_var, check_id = paste0("5_check_priority_", var), question.names=c(var, col.priority.needs), issue = "issue")
@@ -190,7 +191,7 @@ clean.gps <- function(df, x, y){
 
 gps.check.admin <- function(){ ## Flag GPS coordinates that lies in a different sub-district than the one entered - [st_intersection]
   response <<- response %>%                                                     # Match admin3 pcode with corresponding english name 
-    left_join(adm3 %>% select(admin3Pcode, admin3Name_en) %>% dplyr::rename(admin3Name_en_df=admin3Name_en), by = c("a3_sub_district" = "admin3Pcode"))
+    left_join(adm3 %>% st_drop_geometry  %>% select(admin3Pcode, admin3Name_en) %>% dplyr::rename(admin3Name_en_df=admin3Name_en), by = c("a3_sub_district" = "admin3Pcode"))
   empty.gps.sites <<- response %>%
     filter(is.na(Longitude_clean) | is.na(Latitude_clean) | Longitude_clean == 0 | Latitude_clean == 0)
   
@@ -222,7 +223,7 @@ gps.check.admin <- function(){ ## Flag GPS coordinates that lies in a different 
   valid.gps.sf <<- valid.gps.sf %>%
     mutate(issue.gps = ifelse(admin3Pcode_df != admin3Pcode,
                               "The sub-district name entered is not corresponding to the gps location entered", issue.gps))
-  response.df.test <<- response.df %>%
+  response.df <<- response.df %>%
     left_join(valid.gps.sf %>% st_drop_geometry %>%
                 select(uuid, admin2Pcode, admin2Name_en, admin3Pcode, admin3Name_en) %>% 
                 rename_at(vars(-matches("uuid")), ~paste0(., ".gps.matched")), by = "uuid")
