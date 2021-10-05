@@ -35,8 +35,11 @@ detect.outliers <- function(df, method="sd-linear", n.sd=3, n.iqr=3){
 
 ## 2. Priority needs check
 priority.check <- function(df, var){
-  patt_rep <- logical.inconsistencies %>% mutate(replacement = ifelse(service.level.var==var, priority.need, NA)) %>% select(-issue, -service.level.var) %>%
-    rbind(c("legal_services", NA)) ## Choice in priority need that has no corresponding service level var in survey. to be checked
+  patt_rep <- logical.inconsistencies %>% 
+    mutate(replacement = ifelse(service.level.var==var, as.character(priority.need), NA)) %>% 
+    select(-issue, -service.level.var) %>%
+    rbind(c("legal_services", NA)) 
+  ## Choice in priority need that has no corresponding service level var in survey. to be checked
   keep <- logical.inconsistencies %>% filter(service.level.var==var) %>% pull(priority.need) %>% as.character
   df <- df %>% 
     mutate(flag = ifelse((!!sym(var) == "adequate") &
@@ -57,7 +60,8 @@ priority.need.checks <- function(df){
                      "water", "medical_assistance", "education", "livelihood_assistance",
                      "protection_services", "nutrition_services", "sanitation_services")
   logical.inconsistencies <<- data.frame(service.level.var, priority.need) %>%
-    mutate(issue=paste0(service.level.var, " reported as adequate but ", priority.need, " cited as top three priority need. To be checked."))
+    mutate(issue=paste0(service.level.var, " reported as adequate but ", priority.need, " cited as top three priority need. To be checked.")) %>%
+    mutate_all(as.character)
   for (var in service.level.var){
     check_var <- priority.check(df, var)
     add.to.cleaning.log(check_var, check_id = paste0("5_check_priority_", var), question.names=c(var, col.priority.needs), issue = "issue")
@@ -187,7 +191,7 @@ clean.gps <- function(df, x, y){
 
 gps.check.admin <- function(){ ## Flag GPS coordinates that lies in a different sub-district than the one entered - [st_intersection]
   response <<- response %>%                                                     # Match admin3 pcode with corresponding english name 
-    left_join(adm3 %>% select(admin3Pcode, admin3Name_en) %>% dplyr::rename(admin3Name_en_df=admin3Name_en), by = c("a3_sub_district" = "admin3Pcode"))
+    left_join(adm3 %>% st_drop_geometry  %>% select(admin3Pcode, admin3Name_en) %>% dplyr::rename(admin3Name_en_df=admin3Name_en), by = c("a3_sub_district" = "admin3Pcode"))
   empty.gps.sites <<- response %>%
     filter(is.na(Longitude_clean) | is.na(Latitude_clean) | Longitude_clean == 0 | Latitude_clean == 0)
   
@@ -226,7 +230,7 @@ gps.check.admin <- function(){ ## Flag GPS coordinates that lies in a different 
   response.df <<- response.df %>%
     mutate(issue.admin3 = ifelse(is.na(admin3Pcode.gps.matched), "",
                                  ifelse(admin3Pcode.gps.matched != admin3Pcode_df,
-                                        "The sub-district name entered is not corresponding to the gps location entered", "")))
+                                        paste0("The sub-district name entered (", admin3Name_en_df, ") is not corresponding to the gps location entered (", admin3Name_en.gps.matched, ")."), "")))
   response.with.gps <<- valid.gps.sf %>% 
     bind_rows(non.valid.gps.entries %>%
                 left_join(response.sf %>% select(a5_1_gps_longitude, a5_2_gps_latitude, SHAPE),
@@ -325,47 +329,50 @@ save.service.provider.follow.up <- function(cl, filename.out="output/test.xlsx")
 
 save.org.name.follow.up <- function(cl, filename.out="output/test.xlsx"){
   # save organisation name follow-up requests
-  wb <- createWorkbook()
-  addWorksheet(wb, "Follow-up")
-  writeData(wb = wb, x = cl, sheet = "Follow-up", startRow = 1)
   
-  style.col.color <- createStyle(fgFill="#E5FFCC", border="TopBottomLeftRight", borderColour="#000000")
-  style.col.color.first <- createStyle(textDecoration="bold", fgFill="#E5FFCC",
-                                       border="TopBottomLeftRight", borderColour="#000000", wrapText=F)
-  
-  addStyle(wb, "Follow-up", style = style.col.color, rows = 1:(nrow(cl)+1), cols=4)
-  addStyle(wb, "Follow-up", style = style.col.color, rows = 1:(nrow(cl)+1), cols=5)
-  col.style <- createStyle(textDecoration="bold", fgFill="#CECECE", halign="left",
-                           border="TopBottomLeftRight", borderColour="#000000")
-  
-  setColWidths(wb, "Follow-up", cols=1, widths=35)
-  setColWidths(wb, "Follow-up", cols=2, widths=8)
-  setColWidths(wb, "Follow-up", cols=3, widths=8)
-  setColWidths(wb, "Follow-up", cols=4, widths=30)
-  setColWidths(wb, "Follow-up", cols=5, widths=20)
-  setColWidths(wb, "Follow-up", cols=6:8, widths=20)
-  setColWidths(wb, "Follow-up", cols=9, widths=5)
-  setColWidths(wb, "Follow-up", cols=10, widths=8)
-  setColWidths(wb, "Follow-up", cols=(11:12), widths=30)
-  setColWidths(wb, "Follow-up", cols=13:19, widths=15)
-  
-  addStyle(wb, "Follow-up", style = createStyle(wrapText=T), rows = 1:(ncol(cl)+1), cols=6)
-  addStyle(wb, "Follow-up", style = createStyle(wrapText=T), rows = 1:(ncol(cl)+1), cols=7)
-  addStyle(wb, "Follow-up", style = col.style, rows = 1, cols=1:dim(cl)[2])
-  addStyle(wb, "Follow-up", style = style.col.color.first, rows = 1, cols=4)
-  addStyle(wb, "Follow-up", style = style.col.color.first, rows = 1, cols=5)
-  
-  col.id <- which(colnames(cl) %in% c("ngo_code_partial_match"))
-  random.color <- ""
-  for (r in 2:nrow(cl)){
-    if(as.character(cl[r, "uuid"])==as.character(cl[r-1, "uuid"])){
-      if (random.color == "") random.color <- randomColor(1, luminosity = "light")
-      addStyle(wb, "Follow-up", style = createStyle(fgFill=random.color, wrapText=F), 
-               rows = r:(r+1), cols=col.id)
-    } else random.color=""
+  if (nrow(cl)==0) {print("There is no cleaning log to import. all is fine.")} else {
+    wb <- createWorkbook()
+    addWorksheet(wb, "Follow-up")
+    writeData(wb = wb, x = cl, sheet = "Follow-up", startRow = 1)
+    
+    style.col.color <- createStyle(fgFill="#E5FFCC", border="TopBottomLeftRight", borderColour="#000000")
+    style.col.color.first <- createStyle(textDecoration="bold", fgFill="#E5FFCC",
+                                         border="TopBottomLeftRight", borderColour="#000000", wrapText=F)
+    
+    addStyle(wb, "Follow-up", style = style.col.color, rows = 1:(nrow(cl)+1), cols=4)
+    addStyle(wb, "Follow-up", style = style.col.color, rows = 1:(nrow(cl)+1), cols=5)
+    col.style <- createStyle(textDecoration="bold", fgFill="#CECECE", halign="left",
+                             border="TopBottomLeftRight", borderColour="#000000")
+    
+    setColWidths(wb, "Follow-up", cols=1, widths=35)
+    setColWidths(wb, "Follow-up", cols=2, widths=8)
+    setColWidths(wb, "Follow-up", cols=3, widths=8)
+    setColWidths(wb, "Follow-up", cols=4, widths=30)
+    setColWidths(wb, "Follow-up", cols=5, widths=20)
+    setColWidths(wb, "Follow-up", cols=6:8, widths=20)
+    setColWidths(wb, "Follow-up", cols=9, widths=5)
+    setColWidths(wb, "Follow-up", cols=10, widths=8)
+    setColWidths(wb, "Follow-up", cols=(11:12), widths=30)
+    setColWidths(wb, "Follow-up", cols=13:19, widths=15)
+    
+    addStyle(wb, "Follow-up", style = createStyle(wrapText=T), rows = 1:(ncol(cl)+1), cols=6)
+    addStyle(wb, "Follow-up", style = createStyle(wrapText=T), rows = 1:(ncol(cl)+1), cols=7)
+    addStyle(wb, "Follow-up", style = col.style, rows = 1, cols=1:dim(cl)[2])
+    addStyle(wb, "Follow-up", style = style.col.color.first, rows = 1, cols=4)
+    addStyle(wb, "Follow-up", style = style.col.color.first, rows = 1, cols=5)
+    
+    col.id <- which(colnames(cl) %in% c("ngo_code_partial_match"))
+    random.color <- ""
+    for (r in 2:nrow(cl)){
+      if(as.character(cl[r, "uuid"])==as.character(cl[r-1, "uuid"])){
+        if (random.color == "") random.color <- randomColor(1, luminosity = "light")
+        addStyle(wb, "Follow-up", style = createStyle(fgFill=random.color, wrapText=F), 
+                 rows = r:(r+1), cols=col.id)
+      } else random.color=""
+    }
+    
+    saveWorkbook(wb, filename.out, overwrite = TRUE)
   }
-  
-  saveWorkbook(wb, filename.out, overwrite = TRUE)
 } 
 
 save.sitename.follow.up <- function(cl, filename.out="output/test.xlsx"){

@@ -294,7 +294,7 @@ past_entries %>% write.xlsx("output/masterlist/archive/past_entries.xlsx")
 
 ## bind together non duplicates with the clean duplicated entries
 new_master_all_int <- new_master_all_int_2 %>% filter(n==1) %>% bind_rows(latest_entries)
-new_master_all_int %>% write.xlsx(paste0("output/Internal/CCCM_SiteReporting_All Internal", today, ".xlsx"))
+new_master_all_int %>% write.xlsx(paste0("output/Internal/CCCM_SiteReporting_All Internal_", today, ".xlsx"))
 # browseURL(paste0("output/Internal/CCCM_SiteReporting_All Internal", today, ".xlsx"))
 
 ## External masterlist
