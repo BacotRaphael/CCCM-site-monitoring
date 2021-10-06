@@ -71,7 +71,6 @@ dap <- load_analysisplan(filename.dap)
 ### Issues with eviction but having tennecy agreement
 response <- mutate(response, agreement_with_issue= ifelse((response$c3_tenancy_agreement_for_at_least_6_months == "yes" & 
                                                              response$f1_threats_to_the_site.eviction == "1"), "1", "0"))
-
 response <- mutate(response, agreement_with_issue = ifelse((response$c3_tenancy_agreement_for_at_least_6_months == "no"), NA, agreement_with_issue))
 
 #check <- select(response, c("a1_governorate_name", "c3_tenancy_agreement_for_at_least_6_months", "f1_threats_to_the_site.eviction", "agreement_with_issue"))
@@ -142,21 +141,17 @@ response_ren <- response
 response_ren <- response_ren[moveme(names(response_ren), "uuid first")]
 response_ren[18:147] <- choices$`label::english`[match(unlist(response_ren[18:147]), choices$name)]
 response_ren <- response_ren %>% select(-any_of(c("X__version__", "X_id", "X_submission_time", "X_validation_status")))
+## Make sure that lower case colnames are not duplicated, if there are duplicated colnames rename or delete the columns.
 
 ## Compute additionnal indicators for dap
 ## c1_1_type_of_site [% of sites reported as spontaneous vs collective centres (formal) ]
 ## c1_2_type_of_site [% of sites reported as spontaneous vs collective centres (informal)]
 ## If no c1_1/c1_2 run the line below
 dap <- dap %>%
-  ## For now get rid of the two additionnal indicators to match existing question from the tool. see if needed to change it 
-  ## If both needed, uncomment the three lines below and update manually dap to add needed columns and mutate the new indicators in the script
-  dplyr::mutate(across(matches("research|hypothesis$"), ~ifelse(dependent.variable=="c1_2_type_of_site", "% of sites, by type of site", .)),
-                dependent.variable = ifelse(dependent.variable=="c1_2_type_of_site", "c1_type_of_site", dependent.variable)) %>%
-  filter(!dependent.variable %in% c("c1_1_type_of_site")) %>%
   ## Filter to keep only columns that exist in input data // if you want to keep all original indicators from the dap, make sure the columns exist in dataset or mutate them
-  filter(dependent.variable %in% colnames(response_ren)) %>% 
+  # filter(dependent.variable %in% colnames(response_ren)) %>%
   ## hypegrammar needs at least one row with repeat var as non NA to work, independent.var set up as repeat.for.variable [will be reset as independent.var later]
-  dplyr::mutate(repeat.for.variable="a1_governorate_name", across(matches("independent"), ~NA)) 
+  dplyr::mutate(repeat.for.variable="a1_governorate_name", across(matches("independent"), ~NA))
 
 ### Launch Analysis Script
 analysis <- from_analysisplan_map_to_output(data = response_ren,
@@ -166,19 +161,42 @@ analysis <- from_analysisplan_map_to_output(data = response_ren,
                                         
 ## SUMMARY STATS LIST ##
 summarystats <- analysis$results %>% lapply(function(x) x[["summary.statistic"]]) %>% bind_rows %>%
-  mutate(independent.var="a1_governorate_name", independent.var.value=repeat.var.value, repeat.var.value=NA)
+  mutate(independent.var="a1_governorate_name", independent.var.value=repeat.var.value, repeat.var.value=NA, repeat.var=NA)
 # questions
 write.csv(summarystats, paste0("./output/summarystats_final_gov",today,".csv"), row.names = F)
+## Check the raw analysis by running the line below
+# browseURL(paste0("./output/summarystats_final_gov",today,".csv"))
+
 
 ### Load the results and lunch data merge function
 final_analysis <- read.csv(paste0("./output/summarystats_final_gov",today,".csv"), stringsAsFactors = F)
-final_melted_analysis <- from_hyperanalysis_to_datamerge(final_analysis)
+
+### Working out final table to ensure NA and 0 are properly coded
+final_analysis_out <- final_analysis %>%  filter(!is.na(numbers)) %>% 
+  mutate(var = paste0(dependent.var, ".", dependent.var.value)) %>% select(independent.var.value, var, value=numbers)
+var.gov.all <- lapply(unique(final_analysis_out$independent.var.value), function(x) paste0(x, "_", unique(final_analysis_out$var))) %>% unlist
+var.gov <- data.frame(id = var.gov.all, val=0)
+final_analysis_out <- final_analysis_out %>% mutate(id = paste0(independent.var.value, "_", var)) %>%
+  ## Joining missing governorate/variable with no data to either fill with zero or NA
+  right_join(var.gov, by=c("id")) %>% arrange(id) %>%
+  ## Recovering variable names for new entries  
+  mutate(independent.var.value = ifelse(is.na(independent.var.value), str_extract(id, ".+?(?=_)"), independent.var.value),
+         var = ifelse(is.na(var), str_remove(id, paste0(independent.var.value, "_")), var)) %>%
+  ## Extracting parent and choice variable to group by parent question and have list of unique values by governorate/parent question  
+  mutate(parent.var = lapply(str_split(.$var, "\\."), function(x) x[1]) %>% unlist,
+         choice = lapply(str_split(.$var, "\\."), function(x) x[2]) %>% unlist) %>%
+  dplyr::group_by(independent.var.value, parent.var) %>%
+  ## When only NA for governorate/parent question, fill value with NA, otherwise put 0 for the missing choices
+  dplyr::mutate(gov.var.na.only = ifelse(paste0(unique(value), collapse=" ")=="NA", T, F),
+                value = ifelse(is.na(value) & gov.var.na.only, NA, ifelse(is.na(value) & !gov.var.na.only, 0, value))) %>%
+  arrange(independent.var.value, parent.var) %>% ungroup %>% select(independent.var.value, var, value) 
+
+#### Pivot from long to wide format
+final_melted_analysis <- final_analysis_out %>% pivot_wider(values_from = "value", names_from = "var")
 
 #### Multiply everything by 100, round everything up, and replace NAs with 0
 final_dm <- cbind(final_melted_analysis[1], sapply(final_melted_analysis[-1],function(x) x*100))
 final_dm[,-1] <- round(final_dm[,-1],0)
-final_dm[is.na(final_dm)] <- 0
-
 
 ### Join indicators not analyzed by hypegrammaR
 names(final_dm)[names(final_dm) == "independent.var.value"] <- "governorate"
@@ -186,7 +204,6 @@ data_merge <- left_join(final_dm, external_analysis, by = "governorate")
 
 write.xlsx(data_merge, paste0("./output/governorate_data_merge_",today,".xlsx"))
 browseURL(paste0("./output/governorate_data_merge_gov_",today,".xlsx"))
-
 
 ### Add maps to the fina data merge and save it as .csv file
 data_merge$`@map` <- paste0("./maps/YEM_CCCM_",data_merge$governorate,".pdf")
