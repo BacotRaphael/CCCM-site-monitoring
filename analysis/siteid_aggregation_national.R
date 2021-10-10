@@ -164,13 +164,8 @@ response_ren[18:147] <- choices$`label::english`[match(unlist(response_ren[18:14
 response_ren <- response_ren %>% select(-any_of(c("X__version__", "X_id", "X_submission_time", "X_validation_status")))
 
 dap <- dap %>%
-  ## For now get rid of the two additionnal indicators to match existing question from the tool. see if needed to change it 
-  ## If both needed, uncomment the three lines below and update manually dap to add needed columns and mutate the new indicators in the script
-  dplyr::mutate(across(matches("research|hypothesis$"), ~ifelse(dependent.variable=="c1_2_type_of_site", "% of sites, by type of site", .)),
-                dependent.variable = ifelse(dependent.variable=="c1_2_type_of_site", "c1_type_of_site", dependent.variable)) %>%
-  filter(!dependent.variable %in% c("c1_1_type_of_site")) %>%
   ## Filter to keep only columns that exist in input data // if you want to keep all original indicators from the dap, make sure the columns exist in dataset or mutate them
-  filter(dependent.variable %in% colnames(response_ren)) %>% 
+  # filter(dependent.variable %in% colnames(response_ren)) %>% 
   ## hypegrammar needs at least one row with repeat var as non NA to work, independent.var set up as repeat.for.variable [will be reset as independent.var later]
   dplyr::mutate(repeat.for.variable="country_name", across(matches("independent"), ~NA)) 
 
@@ -180,9 +175,6 @@ analysis <- from_analysisplan_map_to_output(data = response_ren,
                                             weighting = NULL,
                                             questionnaire = questionnaire)
 
-
-
-
 ## SUMMARY STATS LIST ##
 summarystats <- analysis$results %>% lapply(function(x) x[["summary.statistic"]]) %>% bind_rows %>%
   mutate(independent.var="country_name", independent.var.value=repeat.var.value, repeat.var.value=NA)
@@ -191,27 +183,43 @@ write.csv(summarystats, paste0("./output/summarystats_final_nat_",today,".csv"),
 
 ### Load the results and lunch data merge function
 final_analysis <- read.csv(paste0("./output/summarystats_final_nat_",today,".csv"), stringsAsFactors = F)
-final_melted_analysis <- from_hyperanalysis_to_datamerge(final_analysis)
+
+### Working out final table to ensure NA and 0 are properly coded
+final_analysis_out <- final_analysis %>%  filter(!is.na(numbers)) %>% 
+  mutate(var = paste0(dependent.var, ".", dependent.var.value)) %>% select(independent.var.value, var, value=numbers)
+var.country.all <- lapply(unique(final_analysis_out$independent.var.value), function(x) paste0(x, "_", unique(final_analysis_out$var))) %>% unlist
+var.country <- data.frame(id = var.country.all, val=0)
+final_analysis_out <- final_analysis_out %>% mutate(id = paste0(independent.var.value, "_", var)) %>%
+  ## Joining missing governorate/variable with no data to either fill with zero or NA
+  right_join(var.country, by=c("id")) %>% arrange(id) %>%
+  ## Recovering variable names for new entries  
+  mutate(independent.var.value = ifelse(is.na(independent.var.value), str_extract(id, ".+?(?=_)"), independent.var.value),
+         var = ifelse(is.na(var), str_remove(id, paste0(independent.var.value, "_")), var)) %>%
+  ## Extracting parent and choice variable to group by parent question and have list of unique values by governorate/parent question  
+  mutate(parent.var = lapply(str_split(.$var, "\\."), function(x) x[1]) %>% unlist,
+         choice = lapply(str_split(.$var, "\\."), function(x) x[2]) %>% unlist) %>%
+  dplyr::group_by(independent.var.value, parent.var) %>%
+  ## When only NA for governorate/parent question, fill value with NA, otherwise put 0 for the missing choices
+  dplyr::mutate(gov.var.na.only = ifelse(paste0(unique(value), collapse=" ")=="NA", T, F),
+                value = ifelse(is.na(value) & gov.var.na.only, NA, ifelse(is.na(value) & !gov.var.na.only, 0, value))) %>%
+  arrange(independent.var.value, parent.var) %>% ungroup %>% select(independent.var.value, var, value) 
+
+final_melted_analysis <- final_analysis_out %>% pivot_wider(values_from = "value", names_from = "var")
+# final_melted_analysis <- from_hyperanalysis_to_datamerge(final_analysis)
 
 #### Multiply everything by 100, round everything up, and replace NAs with 0
 final_dm <- cbind(final_melted_analysis[1], lapply(final_melted_analysis[-1],function(x) x*100))
-
 final_dm[,-1] <- round(final_dm[,-1],0)
-
-final_dm[is.na(final_dm)] <- 0
-
+# final_dm[is.na(final_dm)] <- 0
 
 ### Join indicators not analyzed by hypegrammaR
 names(final_dm)[names(final_dm) == "independent.var.value"] <- "country_name"
 data_merge <- left_join(final_dm, external_analysis, by = "country_name")
-
-#write.xlsx(data_merge, paste0("./output/governorate_data_merge_",today,".xlsx"))
-#browseURL(paste0("./output/governorate_data_merge_",today,".xlsx"))
-
+write.xlsx(data_merge, paste0("./output/governorate_data_merge_",today,".xlsx"))
+# browseURL(paste0("./output/governorate_data_merge_",today,".xlsx"))
 
 ### Add maps to the fina data merge and save it as .csv file
 data_merge$`@map` <- paste0("./maps/YEM_CCCM_",data_merge$country_name,".pdf")
-
 names(data_merge) <- tolower(names(data_merge))
 
 write.csv(data_merge, paste0("./output/national_data_merge_",today,".csv"), row.names = F)                     
